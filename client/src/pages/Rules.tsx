@@ -147,6 +147,7 @@ function RulesContent() {
 
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteRule, setDeleteRule] = useState<any | null>(null);
   const [form, setForm] = useState<RuleFormData>(defaultForm);
   const [filterHost, setFilterHost] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
@@ -503,6 +504,119 @@ function RulesContent() {
     }
   };
 
+  const renderStatusDot = (rule: any) => {
+    if (rule.isRunning) {
+      return <span className="h-2.5 w-2.5 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />;
+    }
+    if (rule.isEnabled) {
+      return <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" />;
+    }
+    return <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />;
+  };
+
+  const renderTransfer = (rule: any, compact = false) => (
+    <div className={`flex min-w-0 items-center gap-1.5 font-mono text-xs ${compact ? "flex-wrap" : ""}`}>
+      <button
+        type="button"
+        onClick={() => copyEntryAddress(rule)}
+        className={`group inline-flex min-w-0 items-center gap-1 rounded bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted/70 ${
+          compact ? "max-w-full" : "max-w-[240px]"
+        }`}
+        title={`复制入口地址: ${getHostEntry(rule.hostId)}:${rule.sourcePort}`}
+      >
+        <code className="truncate">{getHostEntry(rule.hostId) || getHostName(rule.hostId)}:{rule.sourcePort}</code>
+        <Copy className="h-3 w-3 flex-shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100" />
+      </button>
+      <ArrowRight className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+      <code className={`truncate rounded bg-muted/40 px-1.5 py-0.5 ${compact ? "max-w-full" : "max-w-[180px]"}`}>
+        {rule.targetIp}:{rule.targetPort}
+      </code>
+    </div>
+  );
+
+  const renderRouteBadge = (rule: any) => (
+    <Badge
+      variant="outline"
+      className={`whitespace-nowrap text-[10px] ${
+        rule.forwardType === "iptables"
+          ? "border-primary/30 text-primary"
+          : rule.forwardType === "socat"
+          ? "border-chart-5/30 text-chart-5"
+          : rule.forwardType === "gost"
+          ? "border-chart-4/30 text-chart-4"
+          : "border-chart-3/30 text-chart-3"
+      }`}
+    >
+      {rule.forwardType === "gost" && rule.tunnelId ? (
+        <><Network className="h-3 w-3 mr-1" />{tunnelDisplayById.get(Number(rule.tunnelId))?.badgeLabel || "隧道"}</>
+      ) : rule.forwardType === "iptables" ? (
+        <><Shield className="h-3 w-3 mr-1" />iptables</>
+      ) : rule.forwardType === "socat" ? (
+        <><ArrowRightLeft className="h-3 w-3 mr-1" />socat</>
+      ) : rule.forwardType === "gost" ? (
+        <><Network className="h-3 w-3 mr-1" />gost</>
+      ) : (
+        <><Zap className="h-3 w-3 mr-1" />realm</>
+      )}
+    </Badge>
+  );
+
+  const renderRuleTraffic = (rule: any) => {
+    const t = trafficByRule.get(rule.id);
+    if (!t || (t.bytesIn === 0 && t.bytesOut === 0)) {
+      return <span className="text-xs text-muted-foreground">—</span>;
+    }
+    return (
+      <div className="flex flex-col gap-0.5 text-xs">
+        <span className="flex items-center gap-1 text-chart-2">
+          <ArrowDownToLine className="h-3 w-3" /> {formatBytes(t.bytesIn)}
+        </span>
+        <span className="flex items-center gap-1 text-chart-4">
+          <ArrowUpFromLine className="h-3 w-3" /> {formatBytes(t.bytesOut)}
+        </span>
+      </div>
+    );
+  };
+
+  const renderRuleActions = (rule: any) => (
+    <div className="flex items-center justify-end gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => setTrafficDetailRule({ id: rule.id, name: rule.name })}
+        title="查看 TCPing 延迟"
+      >
+        <Activity className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => setSelfTestRule({ id: rule.id, name: rule.name })}
+        title="转发链路自测"
+      >
+        <Stethoscope className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={() => openEdit(rule)}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-destructive hover:text-destructive"
+        onClick={() => setDeleteRule(rule)}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -610,160 +724,98 @@ function RulesContent() {
               ))}
             </div>
           ) : filteredRules.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-[60px]">状态</TableHead>
-                    <TableHead>规则名称</TableHead>
-                    <TableHead className="hidden md:table-cell">所属主机</TableHead>
-                    <TableHead>转发配置</TableHead>
-                    <TableHead className="hidden lg:table-cell">链路</TableHead>
-                    <TableHead className="hidden lg:table-cell">协议</TableHead>
-                    <TableHead className="hidden sm:table-cell">近 24h 流量</TableHead>
-                    <TableHead>开关</TableHead>
-                    <TableHead className="text-right">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRules.map((rule) => (
-                    <TableRow key={rule.id}>
-                      <TableCell>
-                        <div className="flex items-center justify-center">
-                          {rule.isRunning ? (
-                            <span className="h-2.5 w-2.5 rounded-full bg-chart-2 shadow-sm shadow-chart-2/50 animate-pulse" />
-                          ) : rule.isEnabled ? (
-                            <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" />
-                          ) : (
-                            <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />
-                          )}
+            <>
+              <div className="grid gap-3 p-3 lg:hidden">
+                {filteredRules.map((rule) => (
+                  <div key={rule.id} className="rounded-lg border border-border/50 bg-background/65 p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <div className="mt-2 flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                          {renderStatusDot(rule)}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-medium">{rule.name}</span>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <span className="text-sm text-muted-foreground">{getHostName(rule.hostId)}</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5 font-mono text-xs">
-                          <button
-                            type="button"
-                            onClick={() => copyEntryAddress(rule)}
-                            className="group inline-flex max-w-[180px] items-center gap-1 rounded bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted/70 sm:max-w-[240px]"
-                            title={`复制入口地址: ${getHostEntry(rule.hostId)}:${rule.sourcePort}`}
-                          >
-                            <code className="truncate">{getHostEntry(rule.hostId) || getHostName(rule.hostId)}:{rule.sourcePort}</code>
-                            <Copy className="h-3 w-3 text-muted-foreground opacity-60 group-hover:opacity-100" />
-                          </button>
-                          <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                          <code className="bg-muted/40 px-1.5 py-0.5 rounded">{rule.targetIp}:{rule.targetPort}</code>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{rule.name}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{getHostName(rule.hostId)}</div>
                         </div>
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            rule.forwardType === "iptables"
-                              ? "border-primary/30 text-primary"
-                              : rule.forwardType === "socat"
-                              ? "border-chart-5/30 text-chart-5"
-                              : rule.forwardType === "gost"
-                              ? "border-chart-4/30 text-chart-4"
-                              : "border-chart-3/30 text-chart-3"
-                          }`}
-                        >
-                          {rule.forwardType === "gost" && rule.tunnelId ? (
-                            <><Network className="h-3 w-3 mr-1" />{tunnelDisplayById.get(Number(rule.tunnelId))?.badgeLabel || "隧道"}</>
-                          ) : rule.forwardType === "iptables" ? (
-                            <><Shield className="h-3 w-3 mr-1" />iptables</>
-                          ) : rule.forwardType === "socat" ? (
-                            <><ArrowRightLeft className="h-3 w-3 mr-1" />socat</>
-                          ) : rule.forwardType === "gost" ? (
-                            <><Network className="h-3 w-3 mr-1" />gost</>
-                          ) : (
-                            <><Zap className="h-3 w-3 mr-1" />realm</>
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <Badge variant="secondary" className="text-[10px] uppercase">
-                          {rule.protocol}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        {(() => {
-                          const t = trafficByRule.get(rule.id);
-                          if (!t || (t.bytesIn === 0 && t.bytesOut === 0)) {
-                            return <span className="text-xs text-muted-foreground">—</span>;
-                          }
-                          return (
-                            <div className="flex flex-col gap-0.5 text-xs">
-                              <span className="flex items-center gap-1 text-chart-2">
-                                <ArrowDownToLine className="h-3 w-3" /> {formatBytes(t.bytesIn)}
-                              </span>
-                              <span className="flex items-center gap-1 text-chart-4">
-                                <ArrowUpFromLine className="h-3 w-3" /> {formatBytes(t.bytesOut)}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={rule.isEnabled}
-                          onCheckedChange={(checked) =>
-                            toggleMutation.mutate({ id: rule.id, isEnabled: checked })
-                          }
-                          className="scale-75"
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => setTrafficDetailRule({ id: rule.id, name: rule.name })}
-                            title="查看 TCPing 延迟"
-                          >
-                            <Activity className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => setSelfTestRule({ id: rule.id, name: rule.name })}
-                            title="转发链路自测"
-                          >
-                            <Stethoscope className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => openEdit(rule)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => {
-                              if (confirm("确定要删除此转发规则吗？"))
-                                deleteMutation.mutate({ id: rule.id });
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      </div>
+                      <Switch
+                        checked={rule.isEnabled}
+                        onCheckedChange={(checked) => toggleMutation.mutate({ id: rule.id, isEnabled: checked })}
+                        className="scale-75"
+                      />
+                    </div>
+                    <div className="mt-3 rounded-md bg-muted/25 p-2">
+                      {renderTransfer(rule, true)}
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <div className="mb-1 text-muted-foreground">链路</div>
+                        {renderRouteBadge(rule)}
+                      </div>
+                      <div>
+                        <div className="mb-1 text-muted-foreground">协议</div>
+                        <Badge variant="secondary" className="text-[10px] uppercase">{rule.protocol}</Badge>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="mb-1 text-muted-foreground">近 24h 流量</div>
+                        {renderRuleTraffic(rule)}
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end border-t border-border/40 pt-2">
+                      {renderRuleActions(rule)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto lg:block">
+                <Table className="min-w-[980px] table-fixed">
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-[48px] text-center">状态</TableHead>
+                      <TableHead className="w-[120px]">规则</TableHead>
+                      <TableHead className="w-[120px]">主机</TableHead>
+                      <TableHead>转发配置</TableHead>
+                      <TableHead className="w-[150px]">链路</TableHead>
+                      <TableHead className="w-[86px]">协议</TableHead>
+                      <TableHead className="w-[120px]">24h 流量</TableHead>
+                      <TableHead className="w-[76px] text-center">开关</TableHead>
+                      <TableHead className="w-[164px] text-right">操作</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredRules.map((rule) => (
+                      <TableRow key={rule.id}>
+                        <TableCell>
+                          <div className="flex items-center justify-center">{renderStatusDot(rule)}</div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block truncate font-medium" title={rule.name}>{rule.name}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block truncate text-sm text-muted-foreground" title={getHostName(rule.hostId)}>
+                            {getHostName(rule.hostId)}
+                          </span>
+                        </TableCell>
+                        <TableCell>{renderTransfer(rule)}</TableCell>
+                        <TableCell>{renderRouteBadge(rule)}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="text-[10px] uppercase">{rule.protocol}</Badge>
+                        </TableCell>
+                        <TableCell>{renderRuleTraffic(rule)}</TableCell>
+                        <TableCell className="text-center">
+                          <Switch
+                            checked={rule.isEnabled}
+                            onCheckedChange={(checked) => toggleMutation.mutate({ id: rule.id, isEnabled: checked })}
+                            className="scale-75"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">{renderRuleActions(rule)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           ) : rules && rules.length > 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Filter className="h-10 w-10 mb-3 opacity-30" />
@@ -1130,6 +1182,31 @@ function RulesContent() {
               disabled={isPending || !form.name || !form.hostId || !form.targetIp || !form.targetPort || portStatus === "used" || (form.routeMode === "tunnel" && !form.tunnelId)}
             >
               {isPending ? "处理中..." : editingId ? "保存" : "创建"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteRule} onOpenChange={(open) => !open && setDeleteRule(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除转发规则</DialogTitle>
+            <DialogDescription>
+              确认删除 "{deleteRule?.name}"？删除后会同步通知 Agent 清理本地监听和规则。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteRule(null)}>取消</Button>
+            <Button
+              variant="destructive"
+              disabled={!deleteRule || deleteMutation.isPending}
+              onClick={() => {
+                if (!deleteRule) return;
+                deleteMutation.mutate({ id: deleteRule.id });
+                setDeleteRule(null);
+              }}
+            >
+              删除
             </Button>
           </DialogFooter>
         </DialogContent>

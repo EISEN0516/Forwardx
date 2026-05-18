@@ -96,6 +96,7 @@ export async function getAllUsers() {
       maxPorts: users.maxPorts,
       maxConnections: users.maxConnections,
       maxIPs: users.maxIPs,
+      balanceCents: users.balanceCents,
       allowedForwardTypes: users.allowedForwardTypes,
       allowForwardXTunnel: users.allowForwardXTunnel,
       trafficLimit: users.trafficLimit,
@@ -249,5 +250,6 @@ export async function getUserTrafficSummaries() {
     trafficResetDay: users.trafficResetDay,
     maxConnections: users.maxConnections,
     maxIPs: users.maxIPs,
+    balanceCents: users.balanceCents,
   }).from(users).orderBy(desc(users.trafficUsed));
 }

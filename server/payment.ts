@@ -169,6 +169,8 @@ const createOrderInput = z.object({
   amount: z.number().min(0.01).max(1_000_000),
   paymentType: z.enum(["alipay", "wxpay", "stripe"]),
   planId: z.number().int().positive().optional(),
+  discountCode: z.string().trim().max(64).optional(),
+  orderType: z.enum(["balance", "test"]).optional(),
 });
 
 function mergeConfig(raw: any): PaymentConfig {
@@ -682,10 +684,25 @@ async function expireStalePendingOrders() {
 
 async function finalizePaidOrder(outTradeNo: string) {
   const order = await db.getPaymentOrderByOutTradeNo(outTradeNo);
-  if (!order || !order.planId || order.subscriptionId) return;
-  const result = await db.applySubscriptionToUser(order.userId, order.planId, "payment", outTradeNo);
-  await db.updatePaymentOrder(outTradeNo, { subscriptionId: result.subscriptionId, status: "completed" } as any);
-  appendPanelLog("info", `[Plan] subscription granted user=${order.userId} plan=${order.planId} order=${outTradeNo} ports=${result.portRangeStart}-${result.portRangeEnd}`);
+  if (!order || order.status === "completed") return;
+  if (order.planId && !order.subscriptionId) {
+    const result = await db.applySubscriptionToUser(order.userId, order.planId, "payment", outTradeNo);
+    if ((order as any).discountCodeId) await db.consumeDiscountCode(Number((order as any).discountCodeId));
+    await db.updatePaymentOrder(outTradeNo, { subscriptionId: result.subscriptionId, status: "completed" } as any);
+    appendPanelLog("info", `[Plan] subscription granted user=${order.userId} plan=${order.planId} order=${outTradeNo} ports=${result.portRangeStart}-${result.portRangeEnd}`);
+    return;
+  }
+  if ((order as any).orderType === "balance") {
+    await db.addUserBalance(order.userId, Number(order.amountCents || 0), {
+      type: "payment",
+      description: `在线充值：${outTradeNo}`,
+      paymentOrderNo: outTradeNo,
+    } as any);
+    await db.updatePaymentOrder(outTradeNo, { status: "completed" } as any);
+    appendPanelLog("info", `[Balance] payment recharge user=${order.userId} amount=${order.amountCents} order=${outTradeNo}`);
+    return;
+  }
+  await db.updatePaymentOrder(outTradeNo, { status: "completed" } as any);
 }
 
 export const paymentRouter = router({
@@ -759,6 +776,13 @@ export const paymentRouter = router({
       return db.listPaymentOrders(input?.limit || 100);
     }),
 
+  myOrders: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(50) }).optional())
+    .query(async ({ input, ctx }) => {
+      await expireStalePendingOrders();
+      return db.listPaymentOrders(input?.limit || 50, ctx.user.id);
+    }),
+
   createOrder: protectedProcedure
     .input(createOrderInput)
     .mutation(async ({ input, ctx }) => {
@@ -766,12 +790,22 @@ export const paymentRouter = router({
       if (!config.enabled) throw new Error("支付功能未启用");
       let amount = input.amount;
       let subjectSuffix = ctx.user.username;
+      let discountCodeId: number | null = null;
+      let discountAmountCents = 0;
       if (input.planId) {
         const shopEnabled = (await db.getSetting("storeEnabled")) === "true";
         if (!shopEnabled) throw new Error("商店功能未开启");
         const plan = await db.getSubscriptionPlanById(input.planId);
         if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
-        amount = Number(plan.priceCents || 0) / 100;
+        let amountCentsForPlan = Number(plan.priceCents || 0);
+        if (input.discountCode) {
+          if ((await db.getSetting("discountEnabled")) === "false") throw new Error("折扣码功能已关闭");
+          const discount = await db.previewDiscount(input.discountCode, amountCentsForPlan, input.planId);
+          discountCodeId = discount.discountCodeId;
+          discountAmountCents = discount.discountAmountCents;
+          amountCentsForPlan = discount.finalAmountCents;
+        }
+        amount = amountCentsForPlan / 100;
         subjectSuffix = `${plan.name} - ${ctx.user.username}`;
       }
       if (amount < config.minAmount) throw new Error(`最低支付金额为 ${config.minAmount}`);
@@ -826,7 +860,10 @@ export const paymentRouter = router({
         tradeNo: paymentResult.tradeNo,
         payUrl: paymentResult.payUrl,
         qrCode: paymentResult.qrCode,
+        orderType: input.planId ? "plan" : input.orderType || "balance",
         planId: input.planId ?? null,
+        discountCodeId,
+        discountAmountCents,
         clientIp: getClientIp(ctx.req),
         expiresAt,
       } as any);

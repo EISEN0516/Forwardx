@@ -3,8 +3,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { CheckCircle2, CreditCard, Lock, Package, RefreshCw, ShoppingBag } from "lucide-react";
+import { CheckCircle2, CreditCard, Lock, Package, RefreshCw, ShoppingBag, TicketPercent, WalletCards } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -46,20 +47,49 @@ export default function Store() {
   const { data: storeStatus } = trpc.plans.storeStatus.useQuery();
   const { data: plans = [], isLoading } = trpc.plans.storeList.useQuery();
   const { data: subscriptions = [] } = trpc.plans.mySubscriptions.useQuery();
+  const { data: wallet } = trpc.billing.me.useQuery();
+  const { data: billingFeatures } = trpc.billing.featureStatus.useQuery();
   const { data: paymentMethods = [] } = trpc.payment.availableMethods.useQuery(undefined, {
     enabled: !!storeStatus?.enabled,
   });
   const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
   const [paymentType, setPaymentType] = useState<"alipay" | "wxpay" | "stripe">("stripe");
+  const [payMode, setPayMode] = useState<"gateway" | "balance">("gateway");
+  const [discountCode, setDiscountCode] = useState("");
+  const [discountPreview, setDiscountPreview] = useState<any | null>(null);
 
   const createOrder = trpc.payment.createOrder.useMutation({
     onSuccess: (order) => {
       toast.success("订单已创建");
       setSelectedPlan(null);
       utils.plans.mySubscriptions.invalidate();
+      utils.billing.me.invalidate();
       if (order?.payUrl) window.open(order.payUrl, "_blank", "noopener,noreferrer");
     },
     onError: (error) => toast.error(error.message || "创建订单失败"),
+  });
+
+  const buyWithBalance = trpc.billing.purchasePlanWithBalance.useMutation({
+    onSuccess: () => {
+      toast.success("套餐已购买");
+      setSelectedPlan(null);
+      setDiscountCode("");
+      setDiscountPreview(null);
+      utils.plans.mySubscriptions.invalidate();
+      utils.billing.me.invalidate();
+    },
+    onError: (error) => toast.error(error.message || "购买失败"),
+  });
+
+  const previewDiscount = trpc.billing.previewDiscount.useMutation({
+    onSuccess: (data) => {
+      setDiscountPreview(data);
+      toast.success("折扣码已应用");
+    },
+    onError: (error) => {
+      setDiscountPreview(null);
+      toast.error(error.message || "折扣码不可用");
+    },
   });
 
   const buy = (plan: any) => {
@@ -69,17 +99,27 @@ export default function Store() {
       return;
     }
     setPaymentType(firstMethod);
+    setPayMode("gateway");
+    setDiscountCode("");
+    setDiscountPreview(null);
     setSelectedPlan(plan);
   };
 
   const confirmBuy = () => {
     if (!selectedPlan) return;
+    if (payMode === "balance") {
+      buyWithBalance.mutate({ planId: selectedPlan.id, discountCode: billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined });
+      return;
+    }
     createOrder.mutate({
       amount: Number(selectedPlan.priceCents || 0) / 100,
       paymentType,
       planId: selectedPlan.id,
+      discountCode: billingFeatures?.discountEnabled ? discountCode.trim() || undefined : undefined,
     });
   };
+
+  const finalAmountCents = discountPreview?.finalAmountCents ?? selectedPlan?.priceCents ?? 0;
 
   return (
     <DashboardLayout>
@@ -172,36 +212,76 @@ export default function Store() {
                 选择支付方式
               </DialogTitle>
               <DialogDescription>
-                购买 {selectedPlan?.name || "套餐"}，金额 {selectedPlan ? money(selectedPlan.priceCents, selectedPlan.currency) : "-"}
+                购买 {selectedPlan?.name || "套餐"}，金额 {selectedPlan ? money(finalAmountCents, selectedPlan.currency) : "-"}
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-2">
-              {paymentMethods.map((method: any) => (
+            <div className="grid gap-4">
+              <div className="rounded-lg border bg-muted/20 p-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">原价</span>
+                  <span>{selectedPlan ? money(selectedPlan.priceCents, selectedPlan.currency) : "-"}</span>
+                </div>
+                {discountPreview && (
+                  <div className="mt-1 flex items-center justify-between text-emerald-600">
+                    <span>优惠</span>
+                    <span>-{money(discountPreview.discountAmountCents, selectedPlan?.currency)}</span>
+                  </div>
+                )}
+                <div className="mt-2 flex items-center justify-between font-medium">
+                  <span>应付</span>
+                  <span>{money(finalAmountCents, selectedPlan?.currency)}</span>
+                </div>
+              </div>
+              {billingFeatures?.discountEnabled && (
+              <div className="flex gap-2">
+                <Input value={discountCode} onChange={(e) => setDiscountCode(e.target.value.toUpperCase())} placeholder="折扣码（可选）" />
+                <Button
+                  variant="outline"
+                  onClick={() => selectedPlan && previewDiscount.mutate({ code: discountCode, amountCents: Number(selectedPlan.priceCents || 0), planId: selectedPlan.id })}
+                  disabled={!discountCode.trim() || previewDiscount.isPending}
+                >
+                  <TicketPercent className="mr-2 h-4 w-4" /> 应用
+                </Button>
+              </div>
+              )}
+              <div className="grid gap-2">
                 <button
-                  key={method.value}
                   type="button"
-                  onClick={() => setPaymentType(method.value)}
+                  onClick={() => setPayMode("balance")}
                   className={`flex items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors ${
-                    paymentType === method.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border/60 bg-background/60 hover:bg-muted/60"
+                    payMode === "balance" ? "border-primary bg-primary/10 text-primary" : "border-border/60 bg-background/60 hover:bg-muted/60"
                   }`}
                 >
-                  <span className="font-medium">{method.label}</span>
-                  {paymentType === method.value && <CheckCircle2 className="h-4 w-4" />}
+                  <span className="flex items-center gap-2 font-medium"><WalletCards className="h-4 w-4" /> 余额支付（{money(wallet?.balanceCents)}）</span>
+                  {payMode === "balance" && <CheckCircle2 className="h-4 w-4" />}
                 </button>
-              ))}
-              {paymentMethods.length === 0 && (
-                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  当前没有可用的支付方式，请联系管理员。
-                </div>
-              )}
+                {paymentMethods.map((method: any) => (
+                  <button
+                    key={method.value}
+                    type="button"
+                    onClick={() => { setPayMode("gateway"); setPaymentType(method.value); }}
+                    className={`flex items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors ${
+                      payMode === "gateway" && paymentType === method.value
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border/60 bg-background/60 hover:bg-muted/60"
+                    }`}
+                  >
+                    <span className="font-medium">{method.label}</span>
+                    {payMode === "gateway" && paymentType === method.value && <CheckCircle2 className="h-4 w-4" />}
+                  </button>
+                ))}
+                {paymentMethods.length === 0 && (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    当前没有可用的在线支付方式，可使用余额支付或联系管理员。
+                  </div>
+                )}
+              </div>
             </div>
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setSelectedPlan(null)}>取消</Button>
-              <Button onClick={confirmBuy} disabled={createOrder.isPending || paymentMethods.length === 0}>
-                {createOrder.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingBag className="mr-2 h-4 w-4" />}
-                去支付
+              <Button onClick={confirmBuy} disabled={createOrder.isPending || buyWithBalance.isPending || (payMode === "gateway" && paymentMethods.length === 0)}>
+                {(createOrder.isPending || buyWithBalance.isPending) ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingBag className="mr-2 h-4 w-4" />}
+                {payMode === "balance" ? "余额购买" : "去支付"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -1,7 +1,12 @@
+import crypto from "crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
+  balanceTransactions, InsertBalanceTransaction,
+  discountCodePlans,
+  discountCodes, InsertDiscountCode,
   forwardRules,
   paymentOrders, InsertPaymentOrder,
+  redemptionCodes, InsertRedemptionCode,
   subscriptionPlans, InsertSubscriptionPlan,
   subscriptionPlanHosts,
   subscriptionPlanTunnels,
@@ -21,6 +26,14 @@ export async function createPaymentOrder(order: InsertPaymentOrder) {
   if (!db) return undefined;
   await db.insert(paymentOrders).values(order);
   return getPaymentOrderByOutTradeNo(order.outTradeNo);
+}
+
+function normalizeCode(code: string) {
+  return code.trim().toUpperCase();
+}
+
+export function generateBillingCode(prefix: string) {
+  return `${prefix}${crypto.randomBytes(5).toString("hex")}`.toUpperCase();
 }
 
 export async function getPaymentOrderByOutTradeNo(outTradeNo: string) {
@@ -300,7 +313,7 @@ export async function findAvailableSubscriptionPortBlock(portCount: number, host
   return null;
 }
 
-export async function applySubscriptionToUser(userId: number, planId: number, source: "admin" | "payment", paymentOrderNo?: string | null, startsAt?: Date) {
+export async function applySubscriptionToUser(userId: number, planId: number, source: "admin" | "payment" | "redeem" | "balance", paymentOrderNo?: string | null, startsAt?: Date, overrideDurationDays?: number | null) {
   const plan = await getSubscriptionPlanById(planId);
   if (!plan) throw new Error("套餐不存在");
   if (!plan.isActive) throw new Error("套餐已停用");
@@ -310,7 +323,8 @@ export async function applySubscriptionToUser(userId: number, planId: number, so
   const block = await findAvailableSubscriptionPortBlock(Number(plan.portCount) || 1, hostIds, tunnelIds);
   if (!block) throw new Error("套餐可用端口不足，无法分配连续端口段");
   const now = startsAt || new Date();
-  const expiresAt = Number(plan.durationDays) > 0 ? new Date(now.getTime() + Number(plan.durationDays) * 24 * 3600 * 1000) : null;
+  const durationDays = Number(overrideDurationDays || plan.durationDays);
+  const expiresAt = durationDays > 0 ? new Date(now.getTime() + durationDays * 24 * 3600 * 1000) : null;
   const nextTrafficResetAt = Number(plan.trafficLimit || 0) > 0 ? nextMonthlyTrafficReset(now, expiresAt) : null;
   const subscriptionId = await createUserSubscription({
     userId,
@@ -340,6 +354,271 @@ export async function applySubscriptionToUser(userId: number, planId: number, so
   return { subscriptionId, portRangeStart: block.start, portRangeEnd: block.end, expiresAt };
 }
 
+// ==================== Balance ====================
+
+export async function getUserBalance(userId: number) {
+  const user = await getUserById(userId);
+  return Number((user as any)?.balanceCents || 0);
+}
+
+export async function listBalanceTransactions(userId?: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  const base = db
+    .select({
+      id: balanceTransactions.id,
+      userId: balanceTransactions.userId,
+      username: users.username,
+      name: users.name,
+      type: balanceTransactions.type,
+      amountCents: balanceTransactions.amountCents,
+      balanceAfterCents: balanceTransactions.balanceAfterCents,
+      description: balanceTransactions.description,
+      operatorUserId: balanceTransactions.operatorUserId,
+      paymentOrderNo: balanceTransactions.paymentOrderNo,
+      redemptionCodeId: balanceTransactions.redemptionCodeId,
+      createdAt: balanceTransactions.createdAt,
+    })
+    .from(balanceTransactions)
+    .leftJoin(users, eq(balanceTransactions.userId, users.id));
+  if (userId !== undefined) return base.where(eq(balanceTransactions.userId, userId)).orderBy(desc(balanceTransactions.createdAt)).limit(limit);
+  return base.orderBy(desc(balanceTransactions.createdAt)).limit(limit);
+}
+
+export async function addUserBalance(userId: number, amountCents: number, meta: Omit<InsertBalanceTransaction, "userId" | "amountCents" | "balanceAfterCents">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (!Number.isFinite(amountCents) || amountCents === 0) throw new Error("金额无效");
+  const user = await getUserById(userId);
+  if (!user) throw new Error("用户不存在");
+  const current = Number((user as any).balanceCents || 0);
+  const next = current + Math.round(amountCents);
+  if (next < 0) throw new Error("余额不足");
+  await db.update(users).set({ balanceCents: next, updatedAt: nowDate() } as any).where(eq(users.id, userId));
+  await db.insert(balanceTransactions).values({
+    ...meta,
+    userId,
+    amountCents: Math.round(amountCents),
+    balanceAfterCents: next,
+  } as any);
+  return { balanceCents: next };
+}
+
+export async function purchasePlanWithBalance(userId: number, planId: number, discountCodeId?: number | null) {
+  const plan = await getSubscriptionPlanById(planId);
+  if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
+  const discount = discountCodeId ? await getDiscountCodeById(discountCodeId) : null;
+  if (discount) {
+    const allowedPlanIds = Array.isArray((discount as any).planIds) ? (discount as any).planIds.map(Number) : [];
+    if (allowedPlanIds.length > 0 && !allowedPlanIds.includes(Number(planId))) {
+      throw new Error("折扣码不适用于该套餐");
+    }
+  }
+  const amountCents = calculateDiscountedAmount(Number(plan.priceCents || 0), discount);
+  const balance = await getUserBalance(userId);
+  if (balance < amountCents) throw new Error("余额不足");
+  const result = await applySubscriptionToUser(userId, planId, "balance", null);
+  if (amountCents > 0) {
+    await addUserBalance(userId, -amountCents, {
+      type: "purchase",
+      description: `购买套餐：${plan.name}`,
+    } as any);
+  }
+  if (discount) await consumeDiscountCode(discount.id);
+  return result;
+}
+
+// ==================== Redemption Codes ====================
+
+export async function listRedemptionCodes() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: redemptionCodes.id,
+      code: redemptionCodes.code,
+      type: redemptionCodes.type,
+      planId: redemptionCodes.planId,
+      planName: subscriptionPlans.name,
+      durationDays: redemptionCodes.durationDays,
+      amountCents: redemptionCodes.amountCents,
+      startsAt: redemptionCodes.startsAt,
+      expiresAt: redemptionCodes.expiresAt,
+      isActive: redemptionCodes.isActive,
+      usedByUserId: redemptionCodes.usedByUserId,
+      usedByUsername: users.username,
+      usedAt: redemptionCodes.usedAt,
+      createdByUserId: redemptionCodes.createdByUserId,
+      createdAt: redemptionCodes.createdAt,
+      updatedAt: redemptionCodes.updatedAt,
+    })
+    .from(redemptionCodes)
+    .leftJoin(subscriptionPlans, eq(redemptionCodes.planId, subscriptionPlans.id))
+    .leftJoin(users, eq(redemptionCodes.usedByUserId, users.id))
+    .orderBy(desc(redemptionCodes.createdAt));
+}
+
+export async function createRedemptionCodes(data: Omit<InsertRedemptionCode, "code"> & { code?: string }, count = 1) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const created: string[] = [];
+  const total = Math.max(1, Math.min(500, Math.floor(count)));
+  for (let i = 0; i < total; i++) {
+    const code = normalizeCode(i === 0 && data.code ? data.code : generateBillingCode("FXR"));
+    await db.insert(redemptionCodes).values({ ...data, code } as any);
+    created.push(code);
+  }
+  return created;
+}
+
+export async function deleteRedemptionCode(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(redemptionCodes).where(eq(redemptionCodes.id, id));
+}
+
+export async function redeemCode(userId: number, code: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const normalized = normalizeCode(code);
+  const rows = await db.select().from(redemptionCodes).where(eq(redemptionCodes.code, normalized)).limit(1);
+  const item = rows[0] as any;
+  if (!item || !item.isActive) throw new Error("兑换码无效");
+  if (item.usedAt || item.usedByUserId) throw new Error("兑换码已被使用");
+  const now = new Date();
+  if (item.startsAt && new Date(item.startsAt).getTime() > now.getTime()) throw new Error("兑换码尚未生效");
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= now.getTime()) throw new Error("兑换码已过期");
+  if (item.type === "balance") {
+    if (Number(item.amountCents) <= 0) throw new Error("兑换码金额无效");
+    await addUserBalance(userId, Number(item.amountCents), {
+      type: "redeem",
+      description: `兑换余额：${normalized}`,
+      redemptionCodeId: item.id,
+    } as any);
+  } else if (item.type === "plan") {
+    if (!item.planId) throw new Error("兑换码套餐无效");
+    await applySubscriptionToUser(userId, Number(item.planId), "redeem", null, now, item.durationDays || null);
+  } else {
+    throw new Error("兑换码类型无效");
+  }
+  await db.update(redemptionCodes).set({ usedByUserId: userId, usedAt: nowDate(), updatedAt: nowDate() } as any).where(eq(redemptionCodes.id, item.id));
+  return { success: true, type: item.type };
+}
+
+// ==================== Discount Codes ====================
+
+export async function listDiscountCodes() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(discountCodes).orderBy(desc(discountCodes.createdAt));
+  return attachDiscountPlans(rows);
+}
+
+async function getDiscountPlanIds(discountCodeId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ planId: discountCodePlans.planId }).from(discountCodePlans).where(eq(discountCodePlans.discountCodeId, discountCodeId));
+  return rows.map(row => Number(row.planId)).filter(Boolean);
+}
+
+async function attachDiscountPlans<T extends { id: number }>(codes: T[]) {
+  return Promise.all(codes.map(async (code) => ({
+    ...code,
+    planIds: await getDiscountPlanIds(code.id),
+  })));
+}
+
+export async function setDiscountCodePlans(discountCodeId: number, planIds: number[]) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(discountCodePlans).where(eq(discountCodePlans.discountCodeId, discountCodeId));
+  const uniquePlanIds = Array.from(new Set(planIds.filter(id => Number(id) > 0).map(Number)));
+  if (uniquePlanIds.length > 0) {
+    await db.insert(discountCodePlans).values(uniquePlanIds.map(planId => ({ discountCodeId, planId })));
+  }
+}
+
+export async function createDiscountCode(data: InsertDiscountCode, planIds: number[] = []) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const code = normalizeCode(data.code || generateBillingCode("FXD"));
+  await db.insert(discountCodes).values({ ...data, code } as any);
+  const created = await getDiscountCodeByCode(code);
+  if (created) await setDiscountCodePlans(created.id, planIds);
+  return getDiscountCodeByCode(code);
+}
+
+export async function deleteDiscountCode(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(discountCodePlans).where(eq(discountCodePlans.discountCodeId, id));
+  await db.delete(discountCodes).where(eq(discountCodes.id, id));
+}
+
+export async function getDiscountCodeById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(discountCodes).where(eq(discountCodes.id, id)).limit(1);
+  if (!rows[0]) return undefined;
+  return (await attachDiscountPlans([rows[0]]))[0];
+}
+
+export async function getDiscountCodeByCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(discountCodes).where(eq(discountCodes.code, normalizeCode(code))).limit(1);
+  if (!rows[0]) return undefined;
+  return (await attachDiscountPlans([rows[0]]))[0];
+}
+
+export function discountCodeStatus(code: any) {
+  const now = Date.now();
+  if (!code?.isActive) return "disabled";
+  if (code.startsAt && new Date(code.startsAt).getTime() > now) return "pending";
+  if (code.expiresAt && new Date(code.expiresAt).getTime() <= now) return "expired";
+  if (Number(code.maxUses || 0) > 0 && Number(code.usedCount || 0) >= Number(code.maxUses)) return "used_up";
+  return "active";
+}
+
+export function calculateDiscountedAmount(amountCents: number, code: any | null | undefined) {
+  const amount = Math.max(0, Math.round(amountCents));
+  if (!code) return amount;
+  if (discountCodeStatus(code) !== "active") throw new Error("折扣码不可用");
+  if (code.discountType === "percent") {
+    const pct = Math.max(0, Math.min(100, Number(code.discountValue || 0)));
+    return Math.max(0, Math.round(amount * (100 - pct) / 100));
+  }
+  const discount = Math.max(0, Number(code.discountValue || 0));
+  return Math.max(0, amount - discount);
+}
+
+export async function previewDiscount(code: string, amountCents: number, planId?: number | null) {
+  const item = await getDiscountCodeByCode(code);
+  if (!item) throw new Error("折扣码不存在");
+  const allowedPlanIds = Array.isArray((item as any).planIds) ? (item as any).planIds.map(Number) : [];
+  if (allowedPlanIds.length > 0 && (!planId || !allowedPlanIds.includes(Number(planId)))) {
+    throw new Error("折扣码不适用于该套餐");
+  }
+  const finalAmountCents = calculateDiscountedAmount(amountCents, item);
+  return {
+    discountCodeId: item.id,
+    code: item.code,
+    originalAmountCents: amountCents,
+    finalAmountCents,
+    discountAmountCents: Math.max(0, amountCents - finalAmountCents),
+    status: discountCodeStatus(item),
+  };
+}
+
+export async function consumeDiscountCode(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(discountCodes).set({
+    usedCount: sql`${discountCodes.usedCount} + 1`,
+    updatedAt: nowDate(),
+  } as any).where(eq(discountCodes.id, id));
+}
+
 export async function listPaymentOrders(limit = 100, userId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -359,8 +638,11 @@ export async function listPaymentOrders(limit = 100, userId?: number) {
       tradeNo: paymentOrders.tradeNo,
       payUrl: paymentOrders.payUrl,
       qrCode: paymentOrders.qrCode,
+      orderType: paymentOrders.orderType,
       planId: paymentOrders.planId,
       subscriptionId: paymentOrders.subscriptionId,
+      discountCodeId: paymentOrders.discountCodeId,
+      discountAmountCents: paymentOrders.discountAmountCents,
       expiresAt: paymentOrders.expiresAt,
       paidAt: paymentOrders.paidAt,
       createdAt: paymentOrders.createdAt,

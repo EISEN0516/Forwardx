@@ -17,6 +17,7 @@ export function ensureDatabaseSchema(sqlite: Database.Database) {
         gostRateLimitOut INTEGER NOT NULL DEFAULT 0,
         maxConnections INTEGER NOT NULL DEFAULT 0,
         maxIPs INTEGER NOT NULL DEFAULT 0,
+        balanceCents INTEGER NOT NULL DEFAULT 0,
         expiresAt INTEGER,
         trafficAutoReset INTEGER NOT NULL DEFAULT 0,
         trafficResetDay INTEGER NOT NULL DEFAULT 1,
@@ -266,8 +267,11 @@ export function ensureDatabaseSchema(sqlite: Database.Database) {
         tradeNo TEXT,
         payUrl TEXT,
         qrCode TEXT,
+        orderType TEXT NOT NULL DEFAULT 'balance',
         planId INTEGER,
         subscriptionId INTEGER,
+        discountCodeId INTEGER,
+        discountAmountCents INTEGER NOT NULL DEFAULT 0,
         clientIp TEXT,
         rawNotify TEXT,
         expiresAt INTEGER,
@@ -329,10 +333,95 @@ export function ensureDatabaseSchema(sqlite: Database.Database) {
       );
       CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user ON user_subscriptions(userId, status, expiresAt);
       CREATE INDEX IF NOT EXISTS idx_user_subscriptions_plan ON user_subscriptions(planId);
+
+      CREATE TABLE IF NOT EXISTS balance_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        amountCents INTEGER NOT NULL,
+        balanceAfterCents INTEGER NOT NULL,
+        description TEXT,
+        operatorUserId INTEGER,
+        paymentOrderNo TEXT,
+        redemptionCodeId INTEGER,
+        createdAt INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(userId, createdAt DESC);
+
+      CREATE TABLE IF NOT EXISTS redemption_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        planId INTEGER,
+        durationDays INTEGER,
+        amountCents INTEGER NOT NULL DEFAULT 0,
+        startsAt INTEGER,
+        expiresAt INTEGER,
+        isActive INTEGER NOT NULL DEFAULT 1,
+        usedByUserId INTEGER,
+        usedAt INTEGER,
+        createdByUserId INTEGER,
+        createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
+        updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_redemption_codes_status ON redemption_codes(isActive, startsAt, expiresAt, usedAt);
+
+      CREATE TABLE IF NOT EXISTS discount_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        discountType TEXT NOT NULL,
+        discountValue INTEGER NOT NULL,
+        maxUses INTEGER NOT NULL DEFAULT 0,
+        usedCount INTEGER NOT NULL DEFAULT 0,
+        startsAt INTEGER,
+        expiresAt INTEGER,
+        isActive INTEGER NOT NULL DEFAULT 1,
+        createdByUserId INTEGER,
+        createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
+        updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_discount_codes_status ON discount_codes(isActive, startsAt, expiresAt, usedCount);
+
+      CREATE TABLE IF NOT EXISTS discount_code_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discountCodeId INTEGER NOT NULL,
+        planId INTEGER NOT NULL,
+        createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
+        UNIQUE(discountCodeId, planId)
+      );
+      CREATE INDEX IF NOT EXISTS idx_discount_code_plans_code ON discount_code_plans(discountCodeId);
+      CREATE INDEX IF NOT EXISTS idx_discount_code_plans_plan ON discount_code_plans(planId);
+
+      CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'normal',
+        isActive INTEGER NOT NULL DEFAULT 1,
+        startsAt INTEGER,
+        expiresAt INTEGER,
+        createdByUserId INTEGER,
+        createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
+        updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(type, isActive, startsAt, expiresAt, updatedAt DESC);
+
+      CREATE TABLE IF NOT EXISTS announcement_reads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcementId INTEGER NOT NULL,
+        userId INTEGER NOT NULL,
+        dismissedAt INTEGER NOT NULL DEFAULT (unixepoch()),
+        UNIQUE(announcementId, userId)
+      );
+      CREATE INDEX IF NOT EXISTS idx_announcement_reads_user ON announcement_reads(userId, announcementId);
     `);
     for (const stmt of [
+      `ALTER TABLE users ADD COLUMN balanceCents INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE payment_orders ADD COLUMN planId INTEGER`,
       `ALTER TABLE payment_orders ADD COLUMN subscriptionId INTEGER`,
+      `ALTER TABLE payment_orders ADD COLUMN orderType TEXT NOT NULL DEFAULT 'balance'`,
+      `ALTER TABLE payment_orders ADD COLUMN discountCodeId INTEGER`,
+      `ALTER TABLE payment_orders ADD COLUMN discountAmountCents INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE subscription_plans ADD COLUMN maxConnections INTEGER NOT NULL DEFAULT 2000`,
       `ALTER TABLE subscription_plans ADD COLUMN maxIPs INTEGER NOT NULL DEFAULT 10`,
       `ALTER TABLE user_subscriptions ADD COLUMN nextTrafficResetAt INTEGER`,
@@ -345,5 +434,11 @@ export function ensureDatabaseSchema(sqlite: Database.Database) {
     }
     sqlite.prepare(
       `INSERT OR IGNORE INTO system_settings (key, value, updatedAt) VALUES ('storeEnabled', 'false', unixepoch())`
+    ).run();
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO system_settings (key, value, updatedAt) VALUES ('redemptionEnabled', 'true', unixepoch())`
+    ).run();
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO system_settings (key, value, updatedAt) VALUES ('discountEnabled', 'true', unixepoch())`
     ).run();
 }

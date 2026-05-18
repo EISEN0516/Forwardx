@@ -42,8 +42,10 @@ import {
   Route,
   Zap,
   CreditCard,
+  WalletCards,
   Package,
   ShoppingBag,
+  Megaphone,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -55,6 +57,8 @@ import { Label } from "./ui/label";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
+const announcementsMenuItem = { icon: Megaphone, label: "公告", path: "/announcements" };
+
 const mainMenuItems = [
   { icon: LayoutDashboard, label: "仪表盘", path: "/" },
   { icon: Server, label: "主机管理", path: "/hosts" },
@@ -64,6 +68,7 @@ const mainMenuItems = [
 
 const adminMenuItems = [
   { icon: CreditCard, label: "支付对接", path: "/payments" },
+  { icon: WalletCards, label: "余额与兑换", path: "/billing" },
   { icon: Package, label: "套餐管理", path: "/plans" },
   { icon: Users, label: "用户管理", path: "/users" },
   { icon: Settings, label: "系统设置", path: "/settings" },
@@ -107,6 +112,7 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const isMobile = useIsMobile();
   const isAdmin = user?.role === "admin";
+  const utils = trpc.useUtils();
   const { resolvedTheme, setTheme } = useTheme();
   const logoSrc = resolvedTheme === "dark" ? "/logo-dark.png" : "/logo-light.png";
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
@@ -132,6 +138,23 @@ function DashboardLayoutContent({
     enabled: !!user && !isAdmin,
     refetchOnWindowFocus: false,
     retry: false,
+  });
+  const { data: popupAnnouncement } = trpc.announcements.popup.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const [showAnnouncement, setShowAnnouncement] = useState(false);
+
+  useEffect(() => {
+    if (popupAnnouncement?.id) setShowAnnouncement(true);
+  }, [popupAnnouncement?.id]);
+
+  const dismissAnnouncement = trpc.announcements.dismiss.useMutation({
+    onSuccess: () => {
+      setShowAnnouncement(false);
+      utils.announcements.popup.invalidate();
+    },
   });
 
   // Change password dialog state
@@ -176,13 +199,16 @@ function DashboardLayoutContent({
   const visibleMainMenuItems = isAdmin
     ? mainMenuItems
     : mainMenuItems.filter((item) => item.path !== "/hosts" && item.path !== "/tunnels");
-  const userStoreMenuItems = !isAdmin && storeStatus?.enabled
-    ? [{ icon: ShoppingBag, label: "商店", path: "/store" }]
+  const userStoreMenuItems = !isAdmin
+    ? [
+        { icon: WalletCards, label: "我的余额", path: "/wallet" },
+        ...(storeStatus?.enabled ? [{ icon: ShoppingBag, label: "商店", path: "/store" }] : []),
+      ]
     : [];
 
   const allMenuItems = isAdmin
-    ? [...visibleMainMenuItems, ...adminMenuItems]
-    : [...visibleMainMenuItems, ...userStoreMenuItems];
+    ? [...visibleMainMenuItems, announcementsMenuItem, ...adminMenuItems]
+    : [...visibleMainMenuItems, ...userStoreMenuItems, announcementsMenuItem];
 
   const activeMenuItem = allMenuItems.find((item) => item.path === location);
 
@@ -240,7 +266,7 @@ function DashboardLayoutContent({
               主菜单
             </SidebarGroupLabel>
             <SidebarMenu className="px-2 py-1">
-              {[...visibleMainMenuItems, ...userStoreMenuItems].map((item) => {
+              {[...visibleMainMenuItems, ...userStoreMenuItems, announcementsMenuItem].map((item) => {
                 const isActive = location === item.path;
                 return (
                   <SidebarMenuItem key={item.path}>
@@ -457,6 +483,25 @@ function DashboardLayoutContent({
             >
               {changePasswordMutation.isPending ? "修改中..." : "确认修改"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAnnouncement} onOpenChange={(open) => {
+        if (!open && popupAnnouncement?.id) dismissAnnouncement.mutate({ id: popupAnnouncement.id });
+        setShowAnnouncement(open);
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogTitle className="flex items-center gap-2">
+            <Megaphone className="h-5 w-5" />
+            {popupAnnouncement?.title || "公告"}
+          </DialogTitle>
+          <DialogDescription>管理员发布的登录提醒，关闭后可在左侧“公告”中查看。</DialogDescription>
+          <div className="max-h-[50svh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background/45 p-4 text-sm leading-6">
+            {popupAnnouncement?.content}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => popupAnnouncement?.id && dismissAnnouncement.mutate({ id: popupAnnouncement.id })}>我知道了</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -31,6 +31,7 @@ export const users = sqliteTable("users", {
   gostRateLimitOut: integer("gostRateLimitOut").notNull().default(0),
   maxConnections: integer("maxConnections").notNull().default(0),
   maxIPs: integer("maxIPs").notNull().default(0),
+  balanceCents: integer("balanceCents").notNull().default(0),
   // ===== 流量管理字段 =====
   trafficLimit: integer("trafficLimit").notNull().default(0),           // 流量额度（字节），0 = 不限制
   trafficUsed: integer("trafficUsed").notNull().default(0),             // 已用流量（字节）
@@ -228,8 +229,11 @@ export const paymentOrders = sqliteTable("payment_orders", {
   tradeNo: text("tradeNo"),
   payUrl: text("payUrl"),
   qrCode: text("qrCode"),
+  orderType: text("orderType").notNull().default("balance"), // balance | plan | test
   planId: integer("planId"),
   subscriptionId: integer("subscriptionId"),
+  discountCodeId: integer("discountCodeId"),
+  discountAmountCents: integer("discountAmountCents").notNull().default(0),
   clientIp: text("clientIp"),
   rawNotify: text("rawNotify"),
   expiresAt: integer("expiresAt", { mode: "timestamp" }),
@@ -299,6 +303,90 @@ export const userSubscriptions = sqliteTable("user_subscriptions", {
 });
 export type UserSubscription = typeof userSubscriptions.$inferSelect;
 export type InsertUserSubscription = typeof userSubscriptions.$inferInsert;
+
+export const balanceTransactions = sqliteTable("balance_transactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("userId").notNull(),
+  type: text("type").notNull(), // admin_recharge | payment | purchase | redeem
+  amountCents: integer("amountCents").notNull(),
+  balanceAfterCents: integer("balanceAfterCents").notNull(),
+  description: text("description"),
+  operatorUserId: integer("operatorUserId"),
+  paymentOrderNo: text("paymentOrderNo"),
+  redemptionCodeId: integer("redemptionCodeId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type BalanceTransaction = typeof balanceTransactions.$inferSelect;
+export type InsertBalanceTransaction = typeof balanceTransactions.$inferInsert;
+
+export const redemptionCodes = sqliteTable("redemption_codes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  code: text("code").notNull().unique(),
+  type: text("type").notNull(), // plan | balance
+  planId: integer("planId"),
+  durationDays: integer("durationDays"),
+  amountCents: integer("amountCents").notNull().default(0),
+  startsAt: integer("startsAt", { mode: "timestamp" }),
+  expiresAt: integer("expiresAt", { mode: "timestamp" }),
+  isActive: integer("isActive", { mode: "boolean" }).notNull().default(true),
+  usedByUserId: integer("usedByUserId"),
+  usedAt: integer("usedAt", { mode: "timestamp" }),
+  createdByUserId: integer("createdByUserId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type RedemptionCode = typeof redemptionCodes.$inferSelect;
+export type InsertRedemptionCode = typeof redemptionCodes.$inferInsert;
+
+export const discountCodes = sqliteTable("discount_codes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  code: text("code").notNull().unique(),
+  discountType: text("discountType").notNull(), // percent | amount
+  discountValue: integer("discountValue").notNull(),
+  maxUses: integer("maxUses").notNull().default(0),
+  usedCount: integer("usedCount").notNull().default(0),
+  startsAt: integer("startsAt", { mode: "timestamp" }),
+  expiresAt: integer("expiresAt", { mode: "timestamp" }),
+  isActive: integer("isActive", { mode: "boolean" }).notNull().default(true),
+  createdByUserId: integer("createdByUserId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type DiscountCode = typeof discountCodes.$inferSelect;
+export type InsertDiscountCode = typeof discountCodes.$inferInsert;
+
+export const discountCodePlans = sqliteTable("discount_code_plans", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  discountCodeId: integer("discountCodeId").notNull(),
+  planId: integer("planId").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type DiscountCodePlan = typeof discountCodePlans.$inferSelect;
+export type InsertDiscountCodePlan = typeof discountCodePlans.$inferInsert;
+
+export const announcements = sqliteTable("announcements", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  type: text("type").notNull().default("normal"), // normal | popup
+  isActive: integer("isActive", { mode: "boolean" }).notNull().default(true),
+  startsAt: integer("startsAt", { mode: "timestamp" }),
+  expiresAt: integer("expiresAt", { mode: "timestamp" }),
+  createdByUserId: integer("createdByUserId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type Announcement = typeof announcements.$inferSelect;
+export type InsertAnnouncement = typeof announcements.$inferInsert;
+
+export const announcementReads = sqliteTable("announcement_reads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  announcementId: integer("announcementId").notNull(),
+  userId: integer("userId").notNull(),
+  dismissedAt: integer("dismissedAt", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+export type AnnouncementRead = typeof announcementReads.$inferSelect;
+export type InsertAnnouncementRead = typeof announcementReads.$inferInsert;
 
 // ===== 用户-主机权限表（管理员指定用户可使用哪些 Agent/主机） =====
 export const userHostPermissions = sqliteTable("user_host_permissions", {

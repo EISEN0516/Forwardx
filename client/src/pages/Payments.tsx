@@ -374,7 +374,7 @@ export default function Payments() {
             <Card>
               <CardHeader>
                 <CardTitle>基础设置</CardTitle>
-                <CardDescription>支付成功后先记录订单状态，不自动修改用户流量或到期时间</CardDescription>
+                <CardDescription>支付配置用于商店套餐购买；订单支付成功后会按套餐权益自动更新用户权限、到期时间和周期流量。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
                 <div className="flex items-center justify-between rounded-lg border bg-background/70 px-4 py-3">
@@ -625,7 +625,7 @@ export default function Payments() {
                   </Select>
                 </Field>
                 <div className="flex items-end">
-                  <Button className="w-full" onClick={() => createOrder.mutate({ amount: Number(amount), paymentType })} disabled={createOrder.isPending}>
+                  <Button className="w-full" onClick={() => createOrder.mutate({ amount: Number(amount), paymentType, orderType: "test" })} disabled={createOrder.isPending}>
                     {createOrder.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ExternalLink className="mr-2 h-4 w-4" />}
                     创建订单
                   </Button>
@@ -647,7 +647,7 @@ export default function Payments() {
         <Card>
           <CardHeader>
             <CardTitle>订单记录</CardTitle>
-            <CardDescription>支付成功只记录订单状态，套餐、流量或到期时间需要后续权益规则接入</CardDescription>
+            <CardDescription>展示商店套餐购买与测试订单记录；套餐订单支付成功后会自动发放对应权益。</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">

@@ -47,6 +47,7 @@ import {
   Database,
   Server,
   Gauge,
+  WalletCards,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -99,6 +100,10 @@ function UsersContent() {
   const [resetUserId, setResetUserId] = useState<number | null>(null);
   const [resetUserName, setResetUserName] = useState("");
   const [resetNewPassword, setResetNewPassword] = useState("");
+  const [showRecharge, setShowRecharge] = useState(false);
+  const [rechargeUserId, setRechargeUserId] = useState<number | null>(null);
+  const [rechargeUserName, setRechargeUserName] = useState("");
+  const [rechargeAmount, setRechargeAmount] = useState("");
 
   // Traffic settings dialog
   const [showTrafficSettings, setShowTrafficSettings] = useState(false);
@@ -235,6 +240,16 @@ function UsersContent() {
     onError: (err) => toast.error(err.message || "更新转发权限失败"),
   });
 
+  const adminRechargeMutation = trpc.billing.adminRecharge.useMutation({
+    onSuccess: () => {
+      utils.users.list.invalidate();
+      toast.success("余额已充值");
+      setShowRecharge(false);
+      setRechargeAmount("");
+    },
+    onError: (err) => toast.error(err.message || "充值失败"),
+  });
+
   const adminCount = useMemo(() => users?.filter((u) => u.role === "admin").length ?? 0, [users]);
 
   if (currentUser?.role !== "admin") return null;
@@ -350,6 +365,13 @@ function UsersContent() {
     );
   };
 
+  const handleRecharge = () => {
+    if (!rechargeUserId) return;
+    const amountCents = Math.round(Number(rechargeAmount || 0) * 100);
+    if (amountCents <= 0) return toast.error("请输入有效充值金额");
+    adminRechargeMutation.mutate({ userId: rechargeUserId, amountCents, description: "用户管理手动充值" });
+  };
+
   const toggleTunnelPermission = (tunnelId: number) => {
     setAllowedTunnelIds(prev =>
       prev.includes(tunnelId) ? prev.filter(id => id !== tunnelId) : [...prev, tunnelId]
@@ -400,6 +422,7 @@ function UsersContent() {
                     <TableHead>用户</TableHead>
                     <TableHead className="hidden sm:table-cell">角色</TableHead>
                     <TableHead>流量使用</TableHead>
+                    <TableHead className="hidden md:table-cell">余额</TableHead>
                     <TableHead className="hidden md:table-cell">到期时间</TableHead>
                     <TableHead className="hidden lg:table-cell">权限</TableHead>
                     <TableHead className="hidden lg:table-cell">规则限制</TableHead>
@@ -499,6 +522,11 @@ function UsersContent() {
                           </div>
                         </TableCell>
                         <TableCell className="hidden md:table-cell">
+                          <span className="text-sm font-medium">
+                            {new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format((Number(u.balanceCents) || 0) / 100)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
                           <div className="flex items-center gap-1">
                             {u.expiresAt ? (
                               <>
@@ -553,6 +581,20 @@ function UsersContent() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title="余额充值"
+                              onClick={() => {
+                                setRechargeUserId(u.id);
+                                setRechargeUserName(u.name || u.username);
+                                setRechargeAmount("");
+                                setShowRecharge(true);
+                              }}
+                            >
+                              <WalletCards className="h-3.5 w-3.5" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -706,6 +748,34 @@ function UsersContent() {
             </Button>
             <Button onClick={handleResetPassword} disabled={resetPasswordMutation.isPending}>
               {resetPasswordMutation.isPending ? "重置中..." : "重置密码"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showRecharge} onOpenChange={setShowRecharge}>
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>余额充值</DialogTitle>
+          <DialogDescription>为用户 "{rechargeUserName}" 手动增加余额</DialogDescription>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>充值金额</Label>
+              <Input
+                type="number"
+                min={0.01}
+                step="0.01"
+                value={rechargeAmount}
+                onChange={(e) => setRechargeAmount(e.target.value)}
+                placeholder="例如：50"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRecharge(false)}>
+              取消
+            </Button>
+            <Button onClick={handleRecharge} disabled={adminRechargeMutation.isPending}>
+              {adminRechargeMutation.isPending ? "充值中..." : "确认充值"}
             </Button>
           </DialogFooter>
         </DialogContent>

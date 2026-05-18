@@ -99,6 +99,13 @@ function compareVersions(a: string | null | undefined, b: string | null | undefi
   return 0;
 }
 
+function pickLatestVersion(...versions: Array<string | null | undefined>) {
+  return versions
+    .map(normalizeVersion)
+    .filter(Boolean)
+    .reduce((latest, version) => (compareVersions(version, latest) > 0 ? version : latest), "");
+}
+
 function hostAddressLines(host: any) {
   const rows: Array<{ label: string; value: string }> = [];
   if (host.ipv4) rows.push({ label: "IPv4", value: host.ipv4 });
@@ -352,7 +359,10 @@ function HostsContent() {
     refetchOnWindowFocus: true,
   });
   const { data: systemSettings } = trpc.system.getSettings.useQuery();
-  const latestAgentVersion = systemSettings?.agentVersion || systemSettings?.version;
+  const latestAgentVersion = useMemo(
+    () => pickLatestVersion(systemSettings?.agentVersion, systemSettings?.version),
+    [systemSettings?.agentVersion, systemSettings?.version]
+  );
   const upgradingHosts = useRef<Map<number, string | null>>(new Map());
 
   const [showDialog, setShowDialog] = useState(false);
@@ -524,7 +534,7 @@ function HostsContent() {
       await utils.system.getSettings.invalidate();
       const latestHosts = await utils.hosts.list.fetch();
       const latestSettings = await utils.system.getSettings.fetch();
-      const agentVersion = latestSettings?.agentVersion || latestSettings?.version;
+      const agentVersion = pickLatestVersion(latestSettings?.agentVersion, latestSettings?.version);
       const count = latestHosts.filter((host: any) => host.agentVersion && agentVersion && compareVersions(host.agentVersion, agentVersion) < 0).length;
       toast.success(count > 0 ? `发现 ${count} 台 Agent 有新版本` : "Agent 版本检查完成，暂无新版本");
     } catch (err: any) {
@@ -798,7 +808,7 @@ function HostsContent() {
             <Button
               className="gap-2"
               disabled={!upgradeHost || upgradeAgentMutation.isPending}
-              onClick={() => upgradeHost && upgradeAgentMutation.mutate({ hostId: upgradeHost.id })}
+              onClick={() => upgradeHost && upgradeAgentMutation.mutate({ hostId: upgradeHost.id, targetVersion: latestAgentVersion || null })}
             >
               {upgradeAgentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {upgradeAgentMutation.isPending ? "下发中..." : "确认升级"}

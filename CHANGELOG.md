@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.43] - 2026-05-19
+
+### Added
+
+- Added balance recharge, balance ledger, payment ledger, redemption codes, discount codes, and announcement management.
+- Added user dashboard account cards for package, balance, expiry, used traffic, and remaining traffic.
+
+### Changed
+
+- Store purchases now only show enabled payment methods at checkout, and discounts can be scoped to specific plans.
+- Bumped panel version to 2.2.43. Agent version remains 2.2.36.
+
 ## [2.2.42] - 2026-05-18
 
 ### Changed
