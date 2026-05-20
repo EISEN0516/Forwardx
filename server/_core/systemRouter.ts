@@ -5,7 +5,7 @@ import { ENV } from "../env";
 import { spawn } from "child_process";
 import fs from "fs";
 import { clearPanelLogs, getPanelLogs, getPanelLogSummary } from "./panelLogger";
-import { createMigrationCode } from "../migrationCodes";
+import { approveMigrationRequest, createMigrationCode, getCurrentMigrationCode, rejectMigrationRequest } from "../migrationCodes";
 import { sendMail } from "../email";
 
 /**
@@ -18,7 +18,7 @@ import { sendMail } from "../email";
 export const REPO_URL = "https://github.com/poouo/Forwardx";
 /** Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息 */
 export const TELEGRAM_BOT_URL = "https://t.me/miyin_private_bot";
-export const APP_VERSION = "2.2.47";
+export const APP_VERSION = "2.2.48";
 export const AGENT_VERSION = "2.2.45";
 const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000;
 const MANUAL_LOCAL_UPGRADE_COMMAND =
@@ -326,6 +326,26 @@ export const systemRouter = router({
   createMigrationCode: adminProcedure.mutation(() => {
     return createMigrationCode();
   }),
+
+  getMigrationCode: adminProcedure.query(() => {
+    return getCurrentMigrationCode();
+  }),
+
+  approveMigrationRequest: adminProcedure
+    .input(z.object({ requestId: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const request = approveMigrationRequest(input.requestId);
+      if (!request) throw new Error("迁移请求不存在、已过期或状态已变化");
+      return { success: true, request };
+    }),
+
+  rejectMigrationRequest: adminProcedure
+    .input(z.object({ requestId: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const request = rejectMigrationRequest(input.requestId);
+      if (!request) throw new Error("迁移请求不存在、已过期或状态已变化");
+      return { success: true, request };
+    }),
 
   sendTestEmail: adminProcedure
     .input(z.object({ to: z.string().email("请输入有效邮箱地址") }))

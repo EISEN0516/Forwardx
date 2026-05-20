@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.48] - 2026-05-20
+
+### Changed
+
+- Migration codes are now longer, persist while valid, show a countdown, and require old-panel administrator approval before data export starts.
+- Bumped panel version to 2.2.48. Agent version remains 2.2.45.
+
+### Fixed
+
+- Fixed SQLite scheduler errors caused by binding Date objects in expiration checks, TCPing cleanup, and subscription traffic recharge queries.
+- Replaced the browser-native user traffic reset confirmation with an in-app confirmation dialog.
+
 ## [2.2.47] - 2026-05-20
 
 ### Added

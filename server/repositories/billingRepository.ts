@@ -163,10 +163,10 @@ export async function listUserSubscriptions(userId?: number) {
 export async function getActiveUserSubscriptions(userId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const now = new Date();
+  const nowSec = Math.floor(Date.now() / 1000);
   const conds: any[] = [
     eq(userSubscriptions.status, "active"),
-    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${now})`,
+    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
   ];
   if (userId !== undefined) conds.push(eq(userSubscriptions.userId, userId));
   const rows = await db
@@ -232,11 +232,12 @@ export async function rechargeSubscriptionTrafficCycles() {
   const db = await getDb();
   if (!db) return 0;
   const now = new Date();
+  const nowSec = Math.floor(now.getTime() / 1000);
   const due = await db.select().from(userSubscriptions).where(and(
     eq(userSubscriptions.status, "active"),
     sql`${userSubscriptions.nextTrafficResetAt} IS NOT NULL`,
-    sql`${userSubscriptions.nextTrafficResetAt} <= ${now}`,
-    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${now})`,
+    sql`${userSubscriptions.nextTrafficResetAt} <= ${nowSec}`,
+    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
   ));
   const resetUserIds = new Set<number>();
   for (const sub of due as any[]) {

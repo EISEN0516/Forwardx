@@ -212,11 +212,11 @@ export async function getUsersForAutoReset(day: number) {
 export async function getExpiredUsers() {
   const db = await getDb();
   if (!db) return [];
-  const now = nowDate();
+  const nowSec = Math.floor(Date.now() / 1000);
   return db.select().from(users).where(
     and(
       sql`${users.expiresAt} IS NOT NULL`,
-      sql`${users.expiresAt} <= ${now}`
+      sql`${users.expiresAt} <= ${nowSec}`
     )
   );
 }

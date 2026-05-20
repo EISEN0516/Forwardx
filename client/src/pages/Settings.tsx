@@ -117,6 +117,18 @@ const manualPanelUpgradeCommands = [
   },
 ];
 
+function formatCountdown(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainSeconds = safeSeconds % 60;
+  return `${minutes}:${remainSeconds.toString().padStart(2, "0")}`;
+}
+
+function getMigrationCodeCountdown(code: { expiresAt: number } | null, now: number) {
+  if (!code) return 0;
+  return Math.max(0, Math.ceil((code.expiresAt - now) / 1000));
+}
+
 function SettingsContent() {
   const { user } = useAuth();
   const [location, setLocation] = useLocation();
@@ -876,9 +888,26 @@ function SystemInfoSection() {
     undefined,
     { refetchInterval: 5000 }
   );
+  const { data: currentMigrationCode } = trpc.system.getMigrationCode.useQuery(undefined, {
+    refetchInterval: 1000,
+  });
   const [panelUrlInput, setPanelUrlInput] = useState("");
   const [homepageEnabled, setHomepageEnabled] = useState(true);
-  const [migrationCode, setMigrationCode] = useState<{ code: string; expiresAt: number; expiresInSeconds: number } | null>(null);
+  const [migrationCode, setMigrationCode] = useState<{
+    code: string;
+    expiresAt: number;
+    expiresInSeconds: number;
+    pendingRequest?: {
+      id: string;
+      targetPanelUrl: string;
+      status: "pending" | "approved" | "rejected" | "used";
+      createdAt: number;
+      expiresAt: number;
+      approvedAt?: number;
+      rejectedAt?: number;
+    } | null;
+  } | null>(null);
+  const [migrationCodeTick, setMigrationCodeTick] = useState(Date.now());
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
   const previousUpgradeStatus = useRef<string | null>(null);
@@ -890,6 +919,16 @@ function SystemInfoSection() {
       setHomepageEnabled(settings.homepageEnabled ?? true);
     }
   }, [settings]);
+
+  useEffect(() => {
+    setMigrationCode(currentMigrationCode || null);
+  }, [currentMigrationCode]);
+
+  useEffect(() => {
+    if (!migrationCode) return;
+    const timer = window.setInterval(() => setMigrationCodeTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [migrationCode?.code]);
 
   useEffect(() => {
     const status = upgradeStatus?.job?.status;
@@ -928,17 +967,49 @@ function SystemInfoSection() {
   const createMigrationCodeMutation = trpc.system.createMigrationCode.useMutation({
     onSuccess: (data) => {
       setMigrationCode(data);
+      utils.system.getMigrationCode.invalidate();
       toast.success("迁移码已生成，5 分钟内有效");
     },
     onError: (err) => toast.error(err.message || "生成迁移码失败"),
   });
 
+  const approveMigrationRequestMutation = trpc.system.approveMigrationRequest.useMutation({
+    onSuccess: () => {
+      utils.system.getMigrationCode.invalidate();
+      toast.success("已同意迁移请求，新面板将开始导入数据");
+    },
+    onError: (err) => toast.error(err.message || "同意迁移请求失败"),
+  });
+
+  const rejectMigrationRequestMutation = trpc.system.rejectMigrationRequest.useMutation({
+    onSuccess: () => {
+      utils.system.getMigrationCode.invalidate();
+      toast.success("已拒绝迁移请求");
+    },
+    onError: (err) => toast.error(err.message || "拒绝迁移请求失败"),
+  });
+
   const copyMigrationCode = async (code: string) => {
+    let copied = false;
     try {
       await navigator.clipboard.writeText(code);
-      toast.success("迁移码已复制");
+      copied = true;
     } catch {
-      window.prompt("请手动复制迁移码：", code);
+      const textarea = document.createElement("textarea");
+      textarea.value = code;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    if (copied) {
+      toast.success("迁移码已复制");
+    } else {
+      toast.error("复制失败，请手动选中迁移码复制");
     }
   };
 
@@ -976,6 +1047,8 @@ function SystemInfoSection() {
   const isUpgradeRunning = upgradeStatus?.job.status === "running";
   const upgradeProgress = getUpgradeProgress(upgradeStatus?.job);
   const upgradeErrorLogs = (upgradeStatus?.job?.logs || []).slice(-80).join("\n");
+  const migrationCountdown = getMigrationCodeCountdown(migrationCode, migrationCodeTick);
+  const migrationRequest = migrationCode?.pendingRequest;
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -1065,7 +1138,47 @@ function SystemInfoSection() {
                     复制
                   </Button>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">有效至 {new Date(migrationCode.expiresAt).toLocaleTimeString()}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>有效至 {new Date(migrationCode.expiresAt).toLocaleTimeString()}</span>
+                  <Badge variant={migrationCountdown > 0 ? "outline" : "secondary"}>
+                    剩余 {formatCountdown(migrationCountdown)}
+                  </Badge>
+                </div>
+                {migrationRequest?.status === "pending" && (
+                  <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-300">收到新面板迁移请求</p>
+                    <p className="mt-1 break-all text-xs text-muted-foreground">
+                      目标面板：{migrationRequest.targetPanelUrl}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => approveMigrationRequestMutation.mutate({ requestId: migrationRequest.id })}
+                        disabled={approveMigrationRequestMutation.isPending || rejectMigrationRequestMutation.isPending}
+                      >
+                        同意迁移
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => rejectMigrationRequestMutation.mutate({ requestId: migrationRequest.id })}
+                        disabled={approveMigrationRequestMutation.isPending || rejectMigrationRequestMutation.isPending}
+                      >
+                        拒绝
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {migrationRequest?.status === "approved" && (
+                  <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                    已同意迁移请求，正在等待新面板拉取数据。
+                  </div>
+                )}
+                {migrationRequest?.status === "rejected" && (
+                  <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    已拒绝本次迁移请求。
+                  </div>
+                )}
               </div>
             ) : (
               <Alert>

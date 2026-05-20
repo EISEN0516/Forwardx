@@ -6,7 +6,12 @@ import { getHosts, getUserByUsername, requestHostAgentUpgrade } from "./db";
 import { verifyPassword } from "./password";
 import { pushAgentUpgrade } from "./agentEvents";
 import { AGENT_VERSION } from "./_core/systemRouter";
-import { consumeMigrationCodeForTakeover, consumeTakeoverToken } from "./migrationCodes";
+import {
+  consumeApprovedMigrationRequest,
+  consumeTakeoverToken,
+  createMigrationRequest,
+  getMigrationRequest,
+} from "./migrationCodes";
 
 export type MigrationJobStatus = "pending" | "running" | "success" | "failed";
 
@@ -147,6 +152,7 @@ async function fetchSnapshotFromOldPanel(input: {
   oldPanelUrl: string;
   migrationCode: string;
   targetPanelUrl: string;
+  onPendingApproval?: () => void;
 }) {
   const url = `${normalizePanelUrl(input.oldPanelUrl)}/api/migration/export`;
   const resp = await fetch(url, {
@@ -162,6 +168,47 @@ async function fetchSnapshotFromOldPanel(input: {
     throw new Error(body || `旧面板返回 ${resp.status}`);
   }
   return JSON.parse(body) as MigrationSnapshot;
+}
+
+async function fetchSnapshotFromOldPanelWithApproval(input: {
+  oldPanelUrl: string;
+  migrationCode: string;
+  targetPanelUrl: string;
+  onPendingApproval?: () => void;
+}) {
+  const url = `${normalizePanelUrl(input.oldPanelUrl)}/api/migration/export`;
+  const normalizedTargetPanelUrl = normalizePanelUrl(input.targetPanelUrl);
+  let requestId = "";
+  const deadline = Date.now() + 6 * 60 * 1000;
+
+  while (Date.now() < deadline) {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        migrationCode: input.migrationCode,
+        targetPanelUrl: normalizedTargetPanelUrl,
+        requestId: requestId || undefined,
+      }),
+    });
+    const body = await resp.text();
+
+    if (resp.status === 202) {
+      const pending = body ? JSON.parse(body) : {};
+      requestId = pending.requestId || requestId;
+      input.onPendingApproval?.();
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      continue;
+    }
+
+    if (!resp.ok) {
+      throw new Error(body || `旧面板返回 ${resp.status}`);
+    }
+
+    return JSON.parse(body) as MigrationSnapshot;
+  }
+
+  throw new Error("等待旧面板管理员确认迁移超时，请重新生成迁移码");
 }
 
 async function finalizeOldPanelTakeover(input: {
@@ -203,7 +250,10 @@ export function startPanelMigration(input: {
   void (async () => {
     try {
       setJob(job, { status: "running", progress: 10, step: "正在连接旧面板" });
-      const snapshot = await fetchSnapshotFromOldPanel(input);
+      const snapshot = await fetchSnapshotFromOldPanelWithApproval({
+        ...input,
+        onPendingApproval: () => setJob(job, { progress: 20, step: "等待旧面板管理员确认迁移请求" }),
+      });
       setJob(job, { progress: 35, step: "已获取旧面板数据，正在准备新数据库" });
       await importMigrationSnapshot(snapshot, (progress, step) => setJob(job, { progress, step }));
       setJob(job, { progress: 94, step: "正在写入新面板地址" });
@@ -236,11 +286,32 @@ migrationRouter.post("/api/migration/export", async (req: Request, res: Response
   try {
     const migrationCode = String(req.body?.migrationCode || "");
     const targetPanelUrl = String(req.body?.targetPanelUrl || "");
+    const requestId = String(req.body?.requestId || "");
     if (!migrationCode) {
       res.status(400).json({ error: "migrationCode required" });
       return;
     }
-    const takeover = consumeMigrationCodeForTakeover(migrationCode);
+    const request = requestId
+      ? getMigrationRequest(requestId, migrationCode)
+      : createMigrationRequest(migrationCode, normalizePanelUrl(targetPanelUrl));
+    if (!request) {
+      res.status(401).json({ error: "迁移码无效、已过期或已使用" });
+      return;
+    }
+    if (request.status === "rejected") {
+      res.status(403).json({ error: "旧面板管理员已拒绝本次迁移请求" });
+      return;
+    }
+    if (request.status !== "approved") {
+      res.status(202).json({
+        status: "pending",
+        requestId: request.id,
+        targetPanelUrl: request.targetPanelUrl,
+        expiresAt: request.expiresAt,
+      });
+      return;
+    }
+    const takeover = consumeApprovedMigrationRequest(request.id, migrationCode, normalizePanelUrl(targetPanelUrl));
     if (!takeover) {
       res.status(401).json({ error: "迁移码无效、已过期或已使用" });
       return;

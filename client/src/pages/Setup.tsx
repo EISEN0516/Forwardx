@@ -418,7 +418,7 @@ export default function Setup() {
                         </div>
                         <div className="space-y-2">
                           <Label>旧面板迁移码</Label>
-                          <Input value={migration.migrationCode} onChange={(e) => setMigration({ ...migration, migrationCode: e.target.value.toUpperCase() })} placeholder="12 位迁移码" />
+                          <Input value={migration.migrationCode} onChange={(e) => setMigration({ ...migration, migrationCode: e.target.value.toUpperCase() })} placeholder="24 位迁移码" />
                         </div>
                       </div>
                       <div className="space-y-2">

@@ -100,6 +100,9 @@ function UsersContent() {
   const [resetUserId, setResetUserId] = useState<number | null>(null);
   const [resetUserName, setResetUserName] = useState("");
   const [resetNewPassword, setResetNewPassword] = useState("");
+  const [showResetTraffic, setShowResetTraffic] = useState(false);
+  const [resetTrafficUserId, setResetTrafficUserId] = useState<number | null>(null);
+  const [resetTrafficUserName, setResetTrafficUserName] = useState("");
   const [showRecharge, setShowRecharge] = useState(false);
   const [rechargeUserId, setRechargeUserId] = useState<number | null>(null);
   const [rechargeUserName, setRechargeUserName] = useState("");
@@ -227,6 +230,9 @@ function UsersContent() {
     onSuccess: () => {
       utils.users.list.invalidate();
       toast.success("流量已重置");
+      setShowResetTraffic(false);
+      setResetTrafficUserId(null);
+      setResetTrafficUserName("");
     },
     onError: (err) => toast.error(err.message || "重置流量失败"),
   });
@@ -278,6 +284,11 @@ function UsersContent() {
       return;
     }
     resetPasswordMutation.mutate({ userId: resetUserId, newPassword: resetNewPassword });
+  };
+
+  const handleResetTraffic = () => {
+    if (!resetTrafficUserId) return;
+    resetTrafficMutation.mutate({ userId: resetTrafficUserId });
   };
 
   const openTrafficSettings = (u: any) => {
@@ -610,8 +621,9 @@ function UsersContent() {
                               className="h-8 w-8"
                               title="重置流量"
                               onClick={() => {
-                                if (confirm(`确定要重置用户 "${u.name || u.username}" 的已用流量吗？`))
-                                  resetTrafficMutation.mutate({ userId: u.id });
+                                setResetTrafficUserId(u.id);
+                                setResetTrafficUserName(u.name || u.username);
+                                setShowResetTraffic(true);
                               }}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -748,6 +760,28 @@ function UsersContent() {
             </Button>
             <Button onClick={handleResetPassword} disabled={resetPasswordMutation.isPending}>
               {resetPasswordMutation.isPending ? "重置中..." : "重置密码"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Traffic Dialog */}
+      <Dialog open={showResetTraffic} onOpenChange={setShowResetTraffic}>
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>重置流量</DialogTitle>
+          <DialogDescription>
+            确定要重置用户 "{resetTrafficUserName}" 的已用流量吗？此操作不会修改套餐、余额或权限配置。
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowResetTraffic(false)}
+              disabled={resetTrafficMutation.isPending}
+            >
+              取消
+            </Button>
+            <Button onClick={handleResetTraffic} disabled={resetTrafficMutation.isPending}>
+              {resetTrafficMutation.isPending ? "重置中..." : "确认重置"}
             </Button>
           </DialogFooter>
         </DialogContent>

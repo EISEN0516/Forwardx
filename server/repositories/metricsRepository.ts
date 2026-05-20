@@ -297,7 +297,7 @@ export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; sinc
 export async function cleanOldTcpingStats(retainHours: number = 48) {
   const db = await getDb();
   if (!db) return;
-  const cutoff = new Date(Date.now() - retainHours * 3600 * 1000);
+  const cutoff = Math.floor((Date.now() - retainHours * 3600 * 1000) / 1000);
   await db.delete(tcpingStats).where(sql`${tcpingStats.recordedAt} < ${cutoff}`);
 }
 
