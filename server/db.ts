@@ -1,14 +1,15 @@
 /**
- * SQLite ???????
+ * Database entrypoint.
  *
- * ???????????? server/repositories/*????????????????
- * ?????????? ./db ????????????????????
+ * ForwardX now uses the user's MySQL database as the source of truth. The panel
+ * never creates or resets a default administrator during normal startup. If a
+ * connected database already contains users/admins, that data is reused.
  */
 
 import { eq } from "drizzle-orm";
 import { users } from "../drizzle/schema";
 import { hashPassword } from "./password";
-import { getDb, getSqlite, nowDate } from "./dbRuntime";
+import { connectDatabase, getDb, getDatabaseKind, insertAndGetId, nowDate } from "./dbRuntime";
 import { ensureDatabaseSchema } from "./dbSchema";
 
 export { getDb } from "./dbRuntime";
@@ -28,37 +29,54 @@ export * from "./repositories/announcementRepository";
 // ==================== Initialization ====================
 
 export async function initDatabase() {
-  const db = await getDb();
-  const sqlite = getSqlite();
-  if (!db || !sqlite) {
-    console.warn("[Database] Cannot initialize: SQLite not available");
-    return;
-  }
   try {
-    ensureDatabaseSchema(sqlite);
-
-    // Seed or reset default admin user
-    const defaultPassword = process.env.ADMIN_PASSWORD || "admin123";
-    const existing = await db.select().from(users).where(eq(users.username, "admin")).limit(1);
-    if (existing.length === 0) {
-      const hashedPassword = hashPassword(defaultPassword);
-      await db.insert(users).values({
-        username: "admin",
-        password: hashedPassword,
-        name: "管理员",
-        email: "admin@forwardx.local",
-        role: "admin",
-        canAddRules: true,
-      });
-      console.log("[Database] Default admin user created (admin / admin123)");
-    } else {
-      const hashedPassword = hashPassword(defaultPassword);
-      await db.update(users).set({ password: hashedPassword, role: "admin", canAddRules: true, updatedAt: nowDate() }).where(eq(users.username, "admin"));
-      console.log("[Database] Admin password has been reset to default");
+    const db = await connectDatabase();
+    const kind = getDatabaseKind();
+    if (!db || !kind) {
+      console.warn("[Database] Not configured. Open the panel to complete setup.");
+      return { configured: false, ready: false, hasAdmin: false } as const;
     }
-    console.log("[Database] Initialization complete");
+
+    await ensureDatabaseSchema();
+    const hasAdmin = await hasAdminUser();
+    console.log(`[Database] Initialization complete (${kind}, ${hasAdmin ? "admin exists" : "no admin yet"})`);
+    return { configured: true, ready: true, hasAdmin, kind } as const;
   } catch (error) {
     console.error("[Database] Initialization failed:", error);
-    throw error;
+    return { configured: true, ready: false, hasAdmin: false, error: error instanceof Error ? error.message : String(error) } as const;
   }
+}
+
+export async function ensureConfiguredDatabase() {
+  const db = await getDb();
+  if (!db || !getDatabaseKind()) return false;
+  await ensureDatabaseSchema();
+  return true;
+}
+
+export async function hasAdminUser() {
+  const db = await getDb();
+  if (!db) return false;
+  const rows = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+  return rows.length > 0;
+}
+
+export async function createInitialAdmin(input: { email: string; password: string; name?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  if (await hasAdminUser()) throw new Error("管理员账户已存在，请直接登录");
+
+  const id = await insertAndGetId("users", {
+    username: input.email,
+    password: hashPassword(input.password),
+    name: input.name?.trim() || input.email,
+    email: input.email,
+    role: "admin",
+    canAddRules: true,
+    allowForwardXTunnel: true,
+    createdAt: nowDate(),
+    updatedAt: nowDate(),
+    lastSignedIn: nowDate(),
+  });
+  return id;
 }

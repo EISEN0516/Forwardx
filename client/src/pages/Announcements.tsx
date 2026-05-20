@@ -7,10 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
+import { Bold, Italic, Megaphone, Palette, Pencil, Plus, Trash2, Underline } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -19,21 +18,16 @@ const emptyForm = {
   title: "",
   content: "",
   type: "normal" as "normal" | "popup",
-  isActive: true,
-  startsAt: "",
-  expiresAt: "",
 };
 
-function toInputDate(value?: string | Date | null) {
+function dateText(value?: string | Date | null) {
   if (!value) return "";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
 }
 
-function dateText(value?: string | Date | null) {
-  return value ? new Date(value).toLocaleString() : "不限";
+function renderAnnouncementHtml(content: string) {
+  return { __html: content };
 }
 
 export default function Announcements() {
@@ -77,15 +71,26 @@ export default function Announcements() {
 
   const submit = () => {
     const payload = {
-      title: form.title,
-      content: form.content,
+      title: form.title.trim(),
+      content: form.content.trim(),
       type: form.type,
-      isActive: form.isActive,
-      startsAt: form.startsAt || null,
-      expiresAt: form.expiresAt || null,
     };
     if (form.id) updateAnnouncement.mutate({ ...payload, id: form.id });
     else createAnnouncement.mutate(payload);
+  };
+
+  const insertContent = (before: string, after = "") => {
+    const textarea = document.getElementById("announcement-content") as HTMLTextAreaElement | null;
+    const start = textarea?.selectionStart ?? form.content.length;
+    const end = textarea?.selectionEnd ?? form.content.length;
+    const selected = form.content.slice(start, end);
+    const next = `${form.content.slice(0, start)}${before}${selected}${after}${form.content.slice(end)}`;
+    setForm({ ...form, content: next });
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const cursor = start + before.length + selected.length;
+      textarea?.setSelectionRange(cursor, cursor);
+    });
   };
 
   const edit = (item: any) => {
@@ -94,9 +99,6 @@ export default function Announcements() {
       title: item.title || "",
       content: item.content || "",
       type: item.type === "popup" ? "popup" : "normal",
-      isActive: !!item.isActive,
-      startsAt: toInputDate(item.startsAt),
-      expiresAt: toInputDate(item.expiresAt),
     });
     setOpen(true);
   };
@@ -117,32 +119,36 @@ export default function Announcements() {
         </div>
 
         <div className="grid gap-4">
-          {announcements.map((item: any) => (
-            <Card key={item.id}>
-              <CardHeader>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <Megaphone className="h-5 w-5" />
-                      {item.title}
-                      <Badge variant={item.type === "popup" ? "default" : "outline"}>{item.type === "popup" ? "登录弹窗" : "普通公告"}</Badge>
-                      {isAdmin && <Badge variant={item.isActive ? "outline" : "secondary"}>{item.isActive ? "启用" : "停用"}</Badge>}
-                    </CardTitle>
-                    <CardDescription className="mt-2">有效期：{dateText(item.startsAt)} - {dateText(item.expiresAt)}</CardDescription>
-                  </div>
-                  {isAdmin && (
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="icon" onClick={() => edit(item)}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteAnnouncement.mutate({ id: item.id })}><Trash2 className="h-4 w-4" /></Button>
+          {announcements.map((item: any) => {
+            const isPopup = item.type === "popup";
+            return (
+              <Card key={item.id}>
+                <CardHeader>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <CardTitle className="flex flex-wrap items-center gap-2">
+                        <Megaphone className="h-5 w-5" />
+                        {item.title}
+                        <Badge variant={isPopup ? "default" : "outline"}>{isPopup ? "登录弹窗" : "普通公告"}</Badge>
+                      </CardTitle>
+                      {!isPopup && (
+                        <CardDescription className="mt-2">发布时间：{dateText(item.createdAt || item.updatedAt)}</CardDescription>
+                      )}
                     </div>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="whitespace-pre-wrap text-sm leading-6 text-foreground/85">{item.content}</div>
-              </CardContent>
-            </Card>
-          ))}
+                    {isAdmin && (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="icon" onClick={() => edit(item)}><Pencil className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteAnnouncement.mutate({ id: item.id })}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="whitespace-pre-wrap text-sm leading-6 text-foreground/85" dangerouslySetInnerHTML={renderAnnouncementHtml(item.content || "")} />
+                </CardContent>
+              </Card>
+            );
+          })}
           {announcements.length === 0 && (
             <Card>
               <CardHeader><CardTitle>暂无公告</CardTitle><CardDescription>当前没有可查看的公告。</CardDescription></CardHeader>
@@ -154,17 +160,25 @@ export default function Announcements() {
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{form.id ? "编辑公告" : "新增公告"}</DialogTitle>
-              <DialogDescription>登录弹窗公告同一时间只能启用一条，普通公告会在公告页面展示。</DialogDescription>
+              <DialogDescription>登录弹窗公告会在用户登录后弹出，普通公告会在公告页面展示。</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2"><Label>标题</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
                 <div className="space-y-2"><Label>类型</Label><Select value={form.type} onValueChange={(type: "normal" | "popup") => setForm({ ...form, type })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="normal">普通公告</SelectItem><SelectItem value="popup">登录弹窗</SelectItem></SelectContent></Select></div>
-                <div className="space-y-2"><Label>生效时间</Label><Input type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} /></div>
-                <div className="space-y-2"><Label>失效时间</Label><Input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} /></div>
               </div>
-              <div className="space-y-2"><Label>内容</Label><Textarea className="min-h-40" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></div>
-              <label className="flex items-center gap-2 text-sm"><Switch checked={form.isActive} onCheckedChange={(isActive) => setForm({ ...form, isActive })} /> 启用公告</label>
+              <div className="space-y-2">
+                <Label>内容</Label>
+                <div className="flex flex-wrap gap-2 rounded-md border border-border/50 bg-muted/20 p-2">
+                  <Button type="button" variant="ghost" size="icon" title="加粗" onClick={() => insertContent("**", "**")}><Bold className="h-4 w-4" /></Button>
+                  <Button type="button" variant="ghost" size="icon" title="斜体" onClick={() => insertContent("*", "*")}><Italic className="h-4 w-4" /></Button>
+                  <Button type="button" variant="ghost" size="icon" title="下划线" onClick={() => insertContent("<u>", "</u>")}><Underline className="h-4 w-4" /></Button>
+                  <Button type="button" variant="ghost" size="icon" title="红色文字" onClick={() => insertContent('<span style="color:#ef4444">', "</span>")}><Palette className="h-4 w-4 text-red-500" /></Button>
+                  <Button type="button" variant="ghost" size="icon" title="绿色文字" onClick={() => insertContent('<span style="color:#22c55e">', "</span>")}><Palette className="h-4 w-4 text-emerald-500" /></Button>
+                  <Button type="button" variant="ghost" size="icon" title="蓝色文字" onClick={() => insertContent('<span style="color:#3b82f6">', "</span>")}><Palette className="h-4 w-4 text-blue-500" /></Button>
+                </div>
+                <Textarea id="announcement-content" className="min-h-40" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>取消</Button>

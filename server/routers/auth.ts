@@ -6,6 +6,7 @@ import { getSessionCookieOptions } from "../_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { ENV } from "../env";
 import * as db from "../db";
+import { getEmailConfig, sendVerificationCode } from "../email";
 
 interface CaptchaEntry {
   question: string;
@@ -15,6 +16,7 @@ interface CaptchaEntry {
 
 const captchaStore = new Map<string, CaptchaEntry>();
 const loginFailStore = new Map<string, { count: number; lastFailAt: number }>();
+const emailCodeStore = new Map<string, { code: string; expiresAt: number }>();
 const LOGIN_FAIL_THRESHOLD = 1;
 const LOGIN_FAIL_WINDOW_MS = 30 * 60 * 1000;
 
@@ -75,6 +77,27 @@ function clearLoginFail(ip: string, username: string) {
   loginFailStore.delete(getLoginFailKey(ip, username));
 }
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function generateEmailCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function verifyEmailCode(email: string, code?: string) {
+  const key = normalizeEmail(email);
+  const entry = emailCodeStore.get(key);
+  if (!entry) return false;
+  if (entry.expiresAt < Date.now()) {
+    emailCodeStore.delete(key);
+    return false;
+  }
+  const ok = entry.code === String(code || "").trim();
+  if (ok) emailCodeStore.delete(key);
+  return ok;
+}
+
 export const authRouter = router({
   me: publicProcedure.query(({ ctx }) => {
     if (!ctx.user) return null;
@@ -85,6 +108,23 @@ export const authRouter = router({
   getCaptcha: publicProcedure.query(() => {
     return generateCaptcha();
   }),
+
+  emailConfig: publicProcedure.query(async () => {
+    const config = await getEmailConfig();
+    return { verifyRegistration: config.enabled && config.verifyRegistration };
+  }),
+
+  sendEmailCode: publicProcedure
+    .input(z.object({ email: z.string().email("邮箱格式不正确") }))
+    .mutation(async ({ input }) => {
+      const config = await getEmailConfig();
+      if (!config.enabled || !config.verifyRegistration) return { skipped: true };
+      const email = normalizeEmail(input.email);
+      const code = generateEmailCode();
+      emailCodeStore.set(email, { code, expiresAt: Date.now() + 5 * 60 * 1000 });
+      await sendVerificationCode(email, code);
+      return { success: true, expiresInSeconds: 300 };
+    }),
 
   needsCaptcha: publicProcedure
     .input(z.object({ username: z.string() }))
@@ -134,6 +174,7 @@ export const authRouter = router({
       password: z.string().min(6, "密码至少6个字符"),
       name: z.string().max(64).optional(),
       email: z.string().email("邮箱格式不正确").optional(),
+      emailCode: z.string().optional(),
       captchaId: z.string(),
       captchaAnswer: z.number(),
     }))
@@ -145,7 +186,14 @@ export const authRouter = router({
       if (existing) {
         throw new Error("用户名已存在");
       }
-      const { captchaId: _captchaId, captchaAnswer: _captchaAnswer, ...userData } = input;
+      const emailConfig = await getEmailConfig();
+      if (emailConfig.enabled && emailConfig.verifyRegistration) {
+        if (!input.email) throw new Error("请填写邮箱地址");
+        if (!verifyEmailCode(input.email, input.emailCode)) {
+          throw new Error("邮箱验证码错误或已过期");
+        }
+      }
+      const { captchaId: _captchaId, captchaAnswer: _captchaAnswer, emailCode: _emailCode, ...userData } = input;
       const id = await db.registerUser(userData);
       return { id, message: "注册成功，请联系管理员开通权限" };
     }),

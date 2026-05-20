@@ -3,27 +3,29 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { appendPanelLog } from "../_core/panelLogger";
 import * as db from "../db";
 
-const dateInput = z.string().trim().optional().nullable();
-
-function parseDate(value?: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date;
-}
-
 const announcementInput = z.object({
   title: z.string().trim().min(1).max(120),
   content: z.string().trim().min(1).max(5000),
   type: z.enum(["normal", "popup"]).default("normal"),
-  isActive: z.boolean().default(true),
-  startsAt: dateInput,
-  expiresAt: dateInput,
 });
+
+function sanitizeAnnouncementContent(content: string) {
+  return content
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+="[^"]*"/gi, "")
+    .replace(/\son\w+='[^']*'/gi, "")
+    .replace(/\sstyle="([^"]*)"/gi, (_match, style: string) => {
+      const safe = String(style)
+        .split(";")
+        .map((part) => part.trim())
+        .filter((part) => /^color\s*:\s*#[0-9a-f]{3,8}$/i.test(part))
+        .join("; ");
+      return safe ? ` style="${safe}"` : "";
+    });
+}
 
 export const announcementsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
-    if (ctx.user.role === "admin") return db.listAnnouncements(true);
     return db.listUserAnnouncements();
   }),
 
@@ -43,11 +45,11 @@ export const announcementsRouter = router({
     .mutation(async ({ input, ctx }) => {
       const result = await db.createAnnouncement({
         title: input.title,
-        content: input.content,
+        content: sanitizeAnnouncementContent(input.content),
         type: input.type,
-        isActive: input.isActive,
-        startsAt: parseDate(input.startsAt),
-        expiresAt: parseDate(input.expiresAt),
+        isActive: true,
+        startsAt: null,
+        expiresAt: null,
         createdByUserId: ctx.user.id,
       } as any);
       appendPanelLog("info", `[Announcement] created type=${input.type} user=${ctx.user.id}`);
@@ -59,11 +61,11 @@ export const announcementsRouter = router({
     .mutation(async ({ input }) => {
       const result = await db.updateAnnouncement(input.id, {
         title: input.title,
-        content: input.content,
+        content: sanitizeAnnouncementContent(input.content),
         type: input.type,
-        isActive: input.isActive,
-        startsAt: parseDate(input.startsAt),
-        expiresAt: parseDate(input.expiresAt),
+        isActive: true,
+        startsAt: null,
+        expiresAt: null,
       } as any);
       appendPanelLog("info", `[Announcement] updated id=${input.id}`);
       return result;

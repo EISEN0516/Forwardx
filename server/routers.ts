@@ -5,16 +5,17 @@ import { agentTokensRouter } from "./routers/agentTokens";
 import { announcementsRouter } from "./routers/announcements";
 import { authRouter } from "./routers/auth";
 import { billingRouter } from "./routers/billing";
-import { configRouter } from "./routers/config";
 import { dashboardRouter } from "./routers/dashboard";
 import { hostsRouter } from "./routers/hosts";
 import { plansRouter } from "./routers/plans";
 import { rulesRouter } from "./routers/rules";
+import { setupRouter } from "./routers/setup";
 import { tunnelsRouter } from "./routers/tunnels";
 import { usersRouter } from "./routers/users";
 
 export const appRouter = router({
   system: systemRouter,
+  setup: setupRouter,
   payment: paymentRouter,
   billing: billingRouter,
   plans: plansRouter,
@@ -26,7 +27,6 @@ export const appRouter = router({
   tunnels: tunnelsRouter,
   agentTokens: agentTokensRouter,
   announcements: announcementsRouter,
-  config: configRouter,
 });
 
 export type AppRouter = typeof appRouter;

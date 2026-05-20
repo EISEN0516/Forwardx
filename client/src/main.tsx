@@ -17,8 +17,8 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 
   if (!isUnauthorized) return;
 
-  // Only redirect if not already on login page
-  if (window.location.pathname !== "/login") {
+  // Only redirect if not already in a public bootstrapping flow.
+  if (window.location.pathname !== "/login" && window.location.pathname !== "/setup") {
     window.location.href = "/login";
   }
 };

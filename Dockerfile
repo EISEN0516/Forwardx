@@ -3,8 +3,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 RUN npm install -g pnpm@10
 
-# better-sqlite3 is a native module and needs build tools inside Alpine.
-RUN apk add --no-cache python3 make g++ sqlite-dev
+RUN apk add --no-cache python3 make g++
 
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 RUN pnpm install --prod=false
@@ -16,7 +15,7 @@ RUN pnpm build
 FROM node:22-alpine AS prod-deps
 WORKDIR /app
 RUN npm install -g pnpm@10
-RUN apk add --no-cache python3 make g++ sqlite-dev
+RUN apk add --no-cache python3 make g++
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 RUN pnpm install --prod
 
@@ -25,9 +24,11 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000 \
-    SQLITE_PATH=/data/forwardx.db
+    DATABASE_CONFIG_PATH=/data/database.json \
+    SQLITE_PATH=/data/forwardx.db \
+    MYSQL_CONFIG_PATH=/data/mysql.json
 
-RUN apk add --no-cache sqlite tini git curl docker-cli docker-cli-compose && mkdir -p /data
+RUN apk add --no-cache tini git curl docker-cli docker-cli-compose && mkdir -p /data
 VOLUME ["/data"]
 
 COPY --from=prod-deps /app/node_modules ./node_modules

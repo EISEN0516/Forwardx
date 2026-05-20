@@ -1,6 +1,6 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+﻿import { and, desc, eq, sql } from "drizzle-orm";
 import { forwardRules, InsertForwardRule, trafficStats } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 
 // ==================== Forward Rule Queries ====================
 
@@ -38,8 +38,7 @@ export async function getForwardRulesByTunnel(tunnelId: number) {
 export async function createForwardRule(rule: InsertForwardRule) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(forwardRules).values(rule);
-  return lastRowId();
+  return insertAndGetId("forward_rules", rule as any);
 }
 
 export async function updateForwardRule(id: number, data: Partial<InsertForwardRule>) {
@@ -83,3 +82,4 @@ export async function updateRuleRunningStatus(id: number, isRunning: boolean) {
   }
   await db.update(forwardRules).set({ isRunning, updatedAt: nowDate() }).where(eq(forwardRules.id, id));
 }
+

@@ -3,8 +3,8 @@ import { defineConfig } from "drizzle-kit";
 export default defineConfig({
   schema: "./drizzle/schema.ts",
   out: "./drizzle",
-  dialect: "sqlite",
+  dialect: "mysql",
   dbCredentials: {
-    url: process.env.SQLITE_PATH ?? "./forwardx.db",
+    url: process.env.MYSQL_URL ?? "mysql://forwardx:forwardx@127.0.0.1:3306/forwardx",
   },
 });

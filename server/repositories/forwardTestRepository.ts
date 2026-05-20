@@ -1,14 +1,13 @@
-import { and, desc, eq } from "drizzle-orm";
+﻿import { and, desc, eq } from "drizzle-orm";
 import { forwardTests, InsertForwardTest, tunnelLatencyStats } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 
 // ==================== Forward Tests ====================
 
 export async function createForwardTest(data: InsertForwardTest) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(forwardTests).values(data);
-  return lastRowId();
+  return insertAndGetId("forward_tests", data as any);
 }
 
 export async function getPendingForwardTestsByHost(hostId: number) {
@@ -72,3 +71,4 @@ export async function getForwardTestById(id: number) {
   const rows = await db.select().from(forwardTests).where(eq(forwardTests.id, id)).limit(1);
   return rows[0];
 }
+

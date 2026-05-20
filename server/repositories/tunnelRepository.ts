@@ -1,7 +1,7 @@
-import crypto from "crypto";
+﻿import crypto from "crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { tunnels, InsertTunnel, forwardRules, userTunnelPermissions } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 
 // ==================== Tunnel Queries ====================
 
@@ -30,8 +30,7 @@ export async function getTunnelById(id: number) {
 export async function createTunnel(data: InsertTunnel) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(tunnels).values(data);
-  return lastRowId();
+  return insertAndGetId("tunnels", data as any);
 }
 
 export async function updateTunnel(id: number, data: Partial<InsertTunnel>) {
@@ -149,7 +148,7 @@ export async function updateTunnelTestResult(id: number, data: {
   }).where(eq(tunnels.id, id));
 }
 
-/** 检查某主机上某端口是否已被占用 */
+/** 妫€鏌ユ煇涓绘満涓婃煇绔彛鏄惁宸茶鍗犵敤 */
 export async function isPortUsedOnHost(hostId: number, sourcePort: number, excludeRuleId?: number): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
@@ -159,19 +158,19 @@ export async function isPortUsedOnHost(hostId: number, sourcePort: number, exclu
   return (Number(r[0]?.count) || 0) > 0;
 }
 
-/** 在主机端口区间内找一个未被占用的随机端口 */
+/** 鍦ㄤ富鏈虹鍙ｅ尯闂村唴鎵句竴涓湭琚崰鐢ㄧ殑闅忔満绔彛 */
 export async function findAvailablePort(hostId: number, rangeStart?: number | null, rangeEnd?: number | null): Promise<number | null> {
   const db = await getDb();
   if (!db) return null;
   const start = rangeStart ?? 10000;
   const end = rangeEnd ?? 65535;
-  // 获取该主机已占用的端口
+  // 鑾峰彇璇ヤ富鏈哄凡鍗犵敤鐨勭鍙?
   const usedRows = await db.select({ port: forwardRules.sourcePort }).from(forwardRules).where(eq(forwardRules.hostId, hostId));
   const usedPorts = new Set(usedRows.map(r => r.port));
-  // 随机尝试
+  // 闅忔満灏濊瘯
   const range = end - start + 1;
   if (range <= 0) return null;
-  // 如果区间不大，直接遍历找空闲
+  // 濡傛灉鍖洪棿涓嶅ぇ锛岀洿鎺ラ亶鍘嗘壘绌洪棽
   if (range <= 10000) {
     const available: number[] = [];
     for (let p = start; p <= end; p++) {
@@ -180,10 +179,11 @@ export async function findAvailablePort(hostId: number, rangeStart?: number | nu
     if (available.length === 0) return null;
     return available[Math.floor(Math.random() * available.length)];
   }
-  // 区间较大时随机尝试
+  // 鍖洪棿杈冨ぇ鏃堕殢鏈哄皾璇?
   for (let i = 0; i < 100; i++) {
     const p = start + Math.floor(Math.random() * range);
     if (!usedPorts.has(p)) return p;
   }
   return null;
 }
+

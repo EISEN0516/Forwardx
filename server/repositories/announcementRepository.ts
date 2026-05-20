@@ -1,14 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { announcementReads, announcements, InsertAnnouncement } from "../../drizzle/schema";
-import { getDb, nowDate } from "../dbRuntime";
-
-function activeWindowCondition(nowSec: number) {
-  return and(
-    eq(announcements.isActive, true),
-    sql`(${announcements.startsAt} IS NULL OR ${announcements.startsAt} <= ${nowSec})`,
-    sql`(${announcements.expiresAt} IS NULL OR ${announcements.expiresAt} > ${nowSec})`,
-  );
-}
+import { executeRaw, getDatabaseKind, getDb, nowDate } from "../dbRuntime";
 
 async function deactivateOtherPopups(exceptId?: number) {
   const db = await getDb();
@@ -25,7 +17,7 @@ export async function listAnnouncements(includeInactive = false) {
   const base = db.select().from(announcements);
   if (!includeInactive) {
     return base
-      .where(activeWindowCondition(Math.floor(Date.now() / 1000)))
+      .where(eq(announcements.isActive, true))
       .orderBy(desc(announcements.updatedAt), desc(announcements.createdAt));
   }
   return base.orderBy(desc(announcements.updatedAt), desc(announcements.createdAt));
@@ -34,16 +26,18 @@ export async function listAnnouncements(includeInactive = false) {
 export async function createAnnouncement(data: InsertAnnouncement) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (data.type === "popup" && data.isActive !== false) await deactivateOtherPopups();
-  await db.insert(announcements).values(data);
+  const next = { ...data, isActive: true, startsAt: null, expiresAt: null } as any;
+  if (next.type === "popup") await deactivateOtherPopups();
+  await db.insert(announcements).values(next);
   return listAnnouncements(true);
 }
 
 export async function updateAnnouncement(id: number, data: Partial<InsertAnnouncement>) {
   const db = await getDb();
   if (!db) return undefined;
-  if (data.type === "popup" && data.isActive !== false) await deactivateOtherPopups(id);
-  await db.update(announcements).set({ ...data, updatedAt: nowDate() } as any).where(eq(announcements.id, id));
+  const next = { ...data, isActive: true, startsAt: null, expiresAt: null, updatedAt: nowDate() } as any;
+  if (next.type === "popup") await deactivateOtherPopups(id);
+  await db.update(announcements).set(next).where(eq(announcements.id, id));
   const rows = await db.select().from(announcements).where(eq(announcements.id, id)).limit(1);
   return rows[0];
 }
@@ -62,11 +56,10 @@ export async function listUserAnnouncements() {
 export async function getUnreadPopupAnnouncement(userId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const nowSec = Math.floor(Date.now() / 1000);
   const popupRows = await db
     .select()
     .from(announcements)
-    .where(and(eq(announcements.type, "popup"), activeWindowCondition(nowSec)))
+    .where(and(eq(announcements.type, "popup"), eq(announcements.isActive, true)))
     .orderBy(desc(announcements.updatedAt), desc(announcements.createdAt))
     .limit(1);
   const popup = popupRows[0];
@@ -82,11 +75,16 @@ export async function getUnreadPopupAnnouncement(userId: number) {
 export async function dismissAnnouncement(userId: number, announcementId: number) {
   const db = await getDb();
   if (!db) return;
-  await db
-    .insert(announcementReads)
-    .values({ userId, announcementId, dismissedAt: nowDate() } as any)
-    .onConflictDoUpdate({
-      target: [announcementReads.announcementId, announcementReads.userId],
-      set: { dismissedAt: nowDate() } as any,
-    });
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (getDatabaseKind() === "sqlite") {
+    await executeRaw(
+      "INSERT INTO announcement_reads (userId, announcementId, dismissedAt) VALUES (?, ?, ?) ON CONFLICT(announcementId, userId) DO UPDATE SET dismissedAt=excluded.dismissedAt",
+      [userId, announcementId, nowSec],
+    );
+  } else {
+    await executeRaw(
+      "INSERT INTO announcement_reads (userId, announcementId, dismissedAt) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE dismissedAt=VALUES(dismissedAt)",
+      [userId, announcementId, nowSec],
+    );
+  }
 }

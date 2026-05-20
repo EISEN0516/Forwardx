@@ -497,9 +497,10 @@ function DashboardLayoutContent({
             {popupAnnouncement?.title || "公告"}
           </DialogTitle>
           <DialogDescription>管理员发布的登录提醒，关闭后可在左侧“公告”中查看。</DialogDescription>
-          <div className="max-h-[50svh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background/45 p-4 text-sm leading-6">
-            {popupAnnouncement?.content}
-          </div>
+          <div
+            className="max-h-[50svh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background/45 p-4 text-sm leading-6"
+            dangerouslySetInnerHTML={{ __html: popupAnnouncement?.content || "" }}
+          />
           <DialogFooter>
             <Button onClick={() => popupAnnouncement?.id && dismissAnnouncement.mutate({ id: popupAnnouncement.id })}>我知道了</Button>
           </DialogFooter>

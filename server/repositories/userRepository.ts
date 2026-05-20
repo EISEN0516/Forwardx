@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { InsertUser, users, forwardRules } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { hashPassword, verifyPassword } from "../password";
 
 // ==================== User Queries ====================
@@ -49,7 +49,7 @@ export async function updateUserProfile(userId: number, data: { name?: string; e
 export async function createUser(data: { username: string; password: string; name?: string; email?: string; role?: "user" | "admin"; canAddRules?: boolean }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(users).values({
+  return insertAndGetId("users", {
     username: data.username,
     password: hashPassword(data.password),
     name: data.name ?? data.username,
@@ -57,14 +57,13 @@ export async function createUser(data: { username: string; password: string; nam
     role: data.role ?? "user",
     canAddRules: data.canAddRules ?? false,
   });
-  return lastRowId();
 }
 
 /** 用户自行注册（默认 role=user, canAddRules=false） */
 export async function registerUser(data: { username: string; password: string; name?: string; email?: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(users).values({
+  return insertAndGetId("users", {
     username: data.username,
     password: hashPassword(data.password),
     name: data.name ?? data.username,
@@ -72,7 +71,6 @@ export async function registerUser(data: { username: string; password: string; n
     role: "user",
     canAddRules: false,
   });
-  return lastRowId();
 }
 
 export async function resetUserPassword(userId: number, newPassword: string) {
@@ -218,7 +216,7 @@ export async function getExpiredUsers() {
   return db.select().from(users).where(
     and(
       sql`${users.expiresAt} IS NOT NULL`,
-      sql`${users.expiresAt} <= ${Math.floor(now.getTime() / 1000)}`
+      sql`${users.expiresAt} <= ${now}`
     )
   );
 }
@@ -238,6 +236,7 @@ export async function getUserTrafficSummaries() {
     id: users.id,
     username: users.username,
     name: users.name,
+    email: users.email,
     role: users.role,
     trafficLimit: users.trafficLimit,
     trafficUsed: users.trafficUsed,

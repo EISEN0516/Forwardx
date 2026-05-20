@@ -360,8 +360,8 @@ function HostsContent() {
   });
   const { data: systemSettings } = trpc.system.getSettings.useQuery();
   const latestAgentVersion = useMemo(
-    () => pickLatestVersion(systemSettings?.agentVersion, systemSettings?.version),
-    [systemSettings?.agentVersion, systemSettings?.version]
+    () => systemSettings?.agentVersion || "",
+    [systemSettings?.agentVersion]
   );
   const upgradingHosts = useRef<Map<number, string | null>>(new Map());
 
@@ -534,7 +534,7 @@ function HostsContent() {
       await utils.system.getSettings.invalidate();
       const latestHosts = await utils.hosts.list.fetch();
       const latestSettings = await utils.system.getSettings.fetch();
-      const agentVersion = pickLatestVersion(latestSettings?.agentVersion, latestSettings?.version);
+      const agentVersion = latestSettings?.agentVersion || "";
       const count = latestHosts.filter((host: any) => host.agentVersion && agentVersion && compareVersions(host.agentVersion, agentVersion) < 0).length;
       toast.success(count > 0 ? `发现 ${count} 台 Agent 有新版本` : "Agent 版本检查完成，暂无新版本");
     } catch (err: any) {

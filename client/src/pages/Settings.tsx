@@ -35,8 +35,6 @@ import {
   Settings2,
   FileCode,
   Download,
-  Upload,
-  DatabaseBackup,
   Github,
   Send,
   Globe,
@@ -49,13 +47,6 @@ import {
   FileText,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useRef, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -132,7 +123,7 @@ function SettingsContent() {
   const initialTab = (() => {
     const query = location.split("?")[1] || "";
     const tab = new URLSearchParams(query).get("tab");
-    return tab === "system" || tab === "logs" || tab === "install" || tab === "backup" || tab === "tokens" ? tab : "tokens";
+    return tab === "system" || tab === "logs" || tab === "install" || tab === "tokens" ? tab : "tokens";
   })();
   const [activeTab, setActiveTab] = useState(initialTab);
   const [tokenToDelete, setTokenToDelete] = useState<any | null>(null);
@@ -146,7 +137,7 @@ function SettingsContent() {
   useEffect(() => {
     const query = location.split("?")[1] || "";
     const tab = new URLSearchParams(query).get("tab");
-    if (tab === "system" || tab === "logs" || tab === "install" || tab === "backup" || tab === "tokens") {
+    if (tab === "system" || tab === "logs" || tab === "install" || tab === "tokens") {
       setActiveTab(tab);
     }
   }, [location]);
@@ -190,17 +181,6 @@ function SettingsContent() {
   const [showNewToken, setShowNewToken] = useState(false);
   const [showScript, setShowScript] = useState(false);
   const [scriptTokenId, setScriptTokenId] = useState<number | null>(null);
-  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<any>(null);
-  const importMutation = trpc.config.importAll.useMutation({
-    onSuccess: () => {
-      utils.agentTokens.list.invalidate();
-      utils.hosts.list.invalidate();
-      utils.rules.list.invalidate();
-      utils.dashboard.stats.invalidate();
-    },
-  });
   const [newToken, setNewToken] = useState("");
   const [description, setDescription] = useState("");
   const [editingToken, setEditingToken] = useState<any>(null);
@@ -320,10 +300,6 @@ function SettingsContent() {
           <TabsTrigger value="install" className="gap-1.5">
             <Terminal className="h-3.5 w-3.5" />
             一键安装
-          </TabsTrigger>
-          <TabsTrigger value="backup" className="gap-1.5">
-            <DatabaseBackup className="h-3.5 w-3.5" />
-            备份与恢复
           </TabsTrigger>
           <TabsTrigger value="system" className="gap-1.5">
             <Settings2 className="h-3.5 w-3.5" />
@@ -585,125 +561,6 @@ function SettingsContent() {
                   <li>- 不带参数执行脚本将进入交互模式，可选择安装或卸载</li>
                 </ul>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Backup & Restore Tab */}
-        <TabsContent value="backup" className="space-y-4">
-          <Alert variant="destructive">
-            <DatabaseBackup className="h-4 w-4" />
-            <AlertTitle>跨版本升级请使用 导出 / 导入 迁移数据</AlertTitle>
-            <AlertDescription>
-              面板 不保证 跨版本在原数据库中自动保留历史数据。请在升级前点击下方 <b>导出配置</b>，
-              保存 JSON 文件后再部署新版本；新面板启动完成后使用 <b>导入配置</b> 即可恢复主机、规则与 Token。
-            </AlertDescription>
-          </Alert>
-          <Alert>
-            <DatabaseBackup className="h-4 w-4" />
-            <AlertTitle>面板配置备份</AlertTitle>
-            <AlertDescription>
-              导出内容涵盖 <b>Agent Token</b>、<b>被控主机（包含 agent token / IP / OS / CPU / 内存 / 心跳状态）</b>、
-              <b>转发规则</b>。导出文件为 JSON，包含明文凭证与 Token，请妥善保管。
-              导入默认 <code>merge</code>同名跳过；选择 <code>replace</code> 会先清空当前用户的主机/规则/Token 后全量导入。
-            </AlertDescription>
-          </Alert>
-
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Download className="h-4 w-4" /> 导出配置
-              </CardTitle>
-              <CardDescription className="text-xs">
-                一键下载当前面板配置 JSON，可用于跨实例迁移或升级后恢复。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={async () => {
-                  try {
-                    const data = await utils.config.exportAll.fetch();
-                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `forwardx-config-${new Date().toISOString().slice(0, 10)}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    toast.success(`已导出：主机 ${data.hosts.length} 条、规则 ${data.rules.length} 条、Token ${data.agentTokens.length} 条`);
-                  } catch (e: any) {
-                    toast.error(e?.message || "导出配置失败，请稍后重试");
-                  }
-                }}
-                className="gap-2"
-              >
-                <Download className="h-4 w-4" /> 导出为 JSON
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Upload className="h-4 w-4" /> 导入配置
-              </CardTitle>
-              <CardDescription className="text-xs">
-                选择之前导出的 JSON 文件，选择合并或覆盖模式后导入。导入后所有规则默认以未运行状态重新下发到 Agent。
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Label className="text-xs text-muted-foreground">模式</Label>
-                <Select value={importMode} onValueChange={(v: any) => setImportMode(v)}>
-                  <SelectTrigger className="w-[180px] h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="merge">merge（同名跳过）</SelectItem>
-                    <SelectItem value="replace">replace（先清空再全量导入）</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Input
-                type="file"
-                accept="application/json"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  try {
-                    const text = await f.text();
-                    const json = JSON.parse(text);
-                    if (importMode === "replace" && !confirm("覆盖模式将删除当前用户的主机 / 规则 / Agent Token。确定继续吗？")) {
-                      e.currentTarget.value = "";
-                      return;
-                    }
-                    setImporting(true);
-                    const result = await importMutation.mutateAsync({ mode: importMode, payload: json });
-                    setImportResult(result);
-                    toast.success(
-                      `导入完成：主机 +${result.summary.hosts.created}/-${result.summary.hosts.skipped}、` +
-                      `规则 +${result.summary.rules.created}/-${result.summary.rules.skipped}、` +
-                      `Token +${result.summary.agentTokens.created}/-${result.summary.agentTokens.skipped}`
-                    );
-                  } catch (err: any) {
-                    toast.error(err?.message || "导入配置失败，请检查文件格式");
-                  } finally {
-                    setImporting(false);
-                    e.currentTarget.value = "";
-                  }
-                }}
-                disabled={importing}
-                className="max-w-md"
-              />
-              {importResult && (
-                <div className="rounded-md border border-border/40 bg-muted/30 p-3 text-xs space-y-1">
-                  <div>主机: 新增 {importResult.summary.hosts.created}，跳过 {importResult.summary.hosts.skipped}</div>
-                  <div>Agent Token: 新增 {importResult.summary.agentTokens.created}，跳过 {importResult.summary.agentTokens.skipped}</div>
-                  <div>转发规则: 新增 {importResult.summary.rules.created}，跳过 {importResult.summary.rules.skipped}</div>
-                </div>
-              )}
             </CardContent>
           </Card>
         </TabsContent>

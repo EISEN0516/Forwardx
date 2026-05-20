@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
+﻿import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import {
   hostMetrics, InsertHostMetric,
   trafficStats, InsertTrafficStat,
@@ -9,7 +9,7 @@ import {
   tcpingStats, InsertTcpingStat,
   tunnelLatencyStats, InsertTunnelLatencyStat,
 } from "../../drizzle/schema";
-import { getDb, getSqlite, lastRowId, nowDate } from "../dbRuntime";
+import { executeRaw, getDb, getDatabaseKind, nowDate } from "../dbRuntime";
 import { clampPositiveInt } from "./repositoryUtils";
 
 // ==================== Host Metrics Queries ====================
@@ -77,7 +77,7 @@ export async function getTotalTraffic(userId?: number) {
   };
 }
 
-/** 按规则汇总流量 */
+/** 鎸夎鍒欐眹鎬绘祦閲?*/
 export async function getTrafficSummaryByRule(opts: {
   userId?: number;
   hostId?: number;
@@ -115,7 +115,7 @@ export async function getTrafficSummaryByRule(opts: {
   return result;
 }
 
-/** 按时间分桶聚合某条规则的流量序列 */
+/** 鎸夋椂闂村垎妗惰仛鍚堟煇鏉¤鍒欑殑娴侀噺搴忓垪 */
 export async function getTrafficSeriesByRule(
   ruleId: number,
   opts: { bucketMinutes?: number; since?: Date } = {}
@@ -127,7 +127,7 @@ export async function getTrafficSeriesByRule(
   const sinceSec = Math.floor(since.getTime() / 1000);
   const bucketSec = bucket * 60;
 
-  const bucketExpr = sql.raw(`("recordedAt" / ${bucketSec}) * ${bucketSec}`);
+  const bucketExpr = sql.raw(`(FLOOR(recordedAt / ${bucketSec}) * ${bucketSec})`);
 
   const rows = await db
     .select({
@@ -149,7 +149,7 @@ export async function getTrafficSeriesByRule(
   })).filter((r) => r.bucket.getTime() / 1000 >= sinceSec);
 }
 
-/** 获取全局流量走势（按时间分桶，用于仪表盘） */
+/** 鑾峰彇鍏ㄥ眬娴侀噺璧板娍锛堟寜鏃堕棿鍒嗘《锛岀敤浜庝华琛ㄧ洏锛?*/
 export async function getGlobalTrafficSeries(opts: { bucketMinutes?: number; since?: Date; userId?: number } = {}) {
   const db = await getDb();
   if (!db) return [] as Array<{ bucket: Date; bytesIn: number; bytesOut: number }>;
@@ -164,7 +164,7 @@ export async function getGlobalTrafficSeries(opts: { bucketMinutes?: number; sin
     conds.push(sql`${trafficStats.ruleId} IN (${sql.join(ruleIds.map(id => sql`${id}`), sql`, `)})`);
   }
 
-  const bucketExpr = sql.raw(`("recordedAt" / ${bucketSec}) * ${bucketSec}`);
+  const bucketExpr = sql.raw(`(FLOOR(recordedAt / ${bucketSec}) * ${bucketSec})`);
 
   const rows = await db
     .select({
@@ -199,7 +199,7 @@ export async function insertTcpingStats(stats: InsertTcpingStat[]) {
   await db.insert(tcpingStats).values(stats);
 }
 
-/** 获取某条规则的 TCPing 延迟序列（按时间升序） */
+/** 鑾峰彇鏌愭潯瑙勫垯鐨?TCPing 寤惰繜搴忓垪锛堟寜鏃堕棿鍗囧簭锛?*/
 export async function insertTunnelLatencyStat(stat: InsertTunnelLatencyStat) {
   const db = await getDb();
   if (!db) return;
@@ -252,7 +252,7 @@ export async function getTcpingSeriesByRule(
   return rows;
 }
 
-/** 获取全局 TCPing 延迟序列（所有规则的平均延迟，按时间分桶） */
+/** 鑾峰彇鍏ㄥ眬 TCPing 寤惰繜搴忓垪锛堟墍鏈夎鍒欑殑骞冲潎寤惰繜锛屾寜鏃堕棿鍒嗘《锛?*/
 export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; since?: Date; userId?: number } = {}) {
   const db = await getDb();
   if (!db) return [] as Array<{ bucket: Date; avgLatency: number; maxLatency: number; minLatency: number; timeoutCount: number; totalCount: number }>;
@@ -267,7 +267,7 @@ export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; sinc
     conds.push(sql`${tcpingStats.ruleId} IN (${sql.join(ruleIds.map(id => sql`${id}`), sql`, `)})`);
   }
 
-  const bucketExpr = sql.raw(`("recordedAt" / ${bucketSec}) * ${bucketSec}`);
+  const bucketExpr = sql.raw(`(FLOOR(recordedAt / ${bucketSec}) * ${bucketSec})`);
 
   const rows = await db
     .select({
@@ -293,33 +293,30 @@ export async function getGlobalTcpingSeries(opts: { bucketMinutes?: number; sinc
   }));
 }
 
-/** 清理过期的 TCPing 数据（保留最近 N 小时） */
+/** 娓呯悊杩囨湡鐨?TCPing 鏁版嵁锛堜繚鐣欐渶杩?N 灏忔椂锛?*/
 export async function cleanOldTcpingStats(retainHours: number = 48) {
   const db = await getDb();
   if (!db) return;
   const cutoff = new Date(Date.now() - retainHours * 3600 * 1000);
-  const sqlite = getSqlite();
-  if (!sqlite) return;
-  const cutoffSec = Math.floor(cutoff.getTime() / 1000);
-  sqlite.prepare(`DELETE FROM tcping_stats WHERE recordedAt < ?`).run(cutoffSec);
+  await db.delete(tcpingStats).where(sql`${tcpingStats.recordedAt} < ${cutoff}`);
 }
 
 export async function timeoutStaleForwardTests(ttlSeconds: number = 60): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
-  const cutoff = new Date(Date.now() - ttlSeconds * 1000);
-  const sqlite = getSqlite();
-  // 用 SQL 直接 update，避免拉取后再写入的竞争
-  if (!sqlite) return 0;
-  const cutoffSec = Math.floor(cutoff.getTime() / 1000);
-  const stmt = sqlite.prepare(
+  const cutoffSec = Math.floor((Date.now() - ttlSeconds * 1000) / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const messageExpr = getDatabaseKind() === "sqlite"
+    ? "('自测超时：Agent 未在' || ? || '秒内上报结果，请检查 Agent 是否在线或已升级到最新版本')"
+    : "CONCAT('自测超时：Agent 未在', ?, '秒内上报结果，请检查 Agent 是否在线或已升级到最新版本')";
+  const info: any = await executeRaw(
     `UPDATE forward_tests
      SET status = 'timeout',
-         message = COALESCE(NULLIF(message, ''), '自测超时：Agent 未在' || ? || '秒内上报结果，请检查 Agent 是否在线或已升级到最新版本'),
-         updatedAt = unixepoch()
+         message = COALESCE(NULLIF(message, ''), ${messageExpr}),
+         updatedAt = ?
      WHERE status IN ('pending', 'running')
-       AND updatedAt < ?`
+       AND updatedAt < ?`,
+    [ttlSeconds, nowSec, cutoffSec],
   );
-  const info = stmt.run(ttlSeconds, cutoffSec);
-  return info.changes || 0;
+  return Number(info?.affectedRows ?? info?.changes ?? 0);
 }

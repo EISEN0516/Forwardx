@@ -16,7 +16,7 @@ import { clearPanelLogs, getPanelLogs, getPanelLogSummary } from "./panelLogger"
 export const REPO_URL = "https://github.com/poouo/Forwardx";
 /** Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息 */
 export const TELEGRAM_BOT_URL = "https://t.me/miyin_private_bot";
-export const APP_VERSION = "2.2.45";
+export const APP_VERSION = "2.2.46";
 export const AGENT_VERSION = "2.2.45";
 const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000;
 const MANUAL_LOCAL_UPGRADE_COMMAND =
@@ -230,6 +230,30 @@ export const systemRouter = router({
       version: APP_VERSION,
       agentVersion: AGENT_VERSION,
       panelPublicUrl: all.panelPublicUrl ?? "",
+      database: {
+        type: all.databaseType || (all.mysqlConfigured === "true" ? "mysql" : "sqlite"),
+        configured: Boolean(all.databaseConfigured || all.mysqlConfigured),
+        mysqlHost: all.mysqlHost ?? "",
+        mysqlDatabase: all.mysqlDatabase ?? "",
+        sqlitePath: all.sqlitePath ?? "",
+      },
+      mysql: {
+        configured: Boolean(all.mysqlConfigured ?? ""),
+        host: all.mysqlHost ?? "",
+        database: all.mysqlDatabase ?? "",
+      },
+      email: {
+        enabled: all.emailEnabled === "true",
+        host: all.emailHost ?? "",
+        port: Number(all.emailPort || 587),
+        secure: all.emailSecure === "true",
+        user: all.emailUser ?? "",
+        from: all.emailFrom ?? "",
+        verifyRegistration: all.emailVerifyRegistration === "true",
+        expiryReminder: all.emailExpiryReminder === "true",
+        trafficReminder: all.emailTrafficReminder === "true",
+        trafficReminderThreshold: Number(all.emailTrafficReminderThreshold || 20),
+      },
       agentEncryption: "aes-256-ctr+hmac-sha256", // 加密方案标识
       upgrade: {
         enabled: !!ENV.upgradeCommand.trim(),
@@ -245,6 +269,19 @@ export const systemRouter = router({
     .input(
       z.object({
         panelPublicUrl: z.string().max(256).optional(),
+        email: z.object({
+          enabled: z.boolean().optional(),
+          host: z.string().max(256).optional(),
+          port: z.number().int().min(1).max(65535).optional(),
+          secure: z.boolean().optional(),
+          user: z.string().max(256).optional(),
+          password: z.string().max(512).optional(),
+          from: z.string().max(320).optional(),
+          verifyRegistration: z.boolean().optional(),
+          expiryReminder: z.boolean().optional(),
+          trafficReminder: z.boolean().optional(),
+          trafficReminderThreshold: z.number().int().min(1).max(99).optional(),
+        }).optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -257,6 +294,23 @@ export const systemRouter = router({
         const normalized = v.replace(/\/+$/, "");
         await db.setSetting("panelPublicUrl", normalized || null);
         console.info(`[Settings] panelPublicUrl ${normalized ? "updated" : "cleared"}`);
+      }
+      if (input.email) {
+        const email = input.email;
+        const next: Record<string, string | null> = {};
+        if (email.enabled !== undefined) next.emailEnabled = email.enabled ? "true" : "false";
+        if (email.host !== undefined) next.emailHost = email.host.trim() || null;
+        if (email.port !== undefined) next.emailPort = String(email.port);
+        if (email.secure !== undefined) next.emailSecure = email.secure ? "true" : "false";
+        if (email.user !== undefined) next.emailUser = email.user.trim() || null;
+        if (email.password !== undefined && email.password.trim()) next.emailPassword = email.password;
+        if (email.from !== undefined) next.emailFrom = email.from.trim() || null;
+        if (email.verifyRegistration !== undefined) next.emailVerifyRegistration = email.verifyRegistration ? "true" : "false";
+        if (email.expiryReminder !== undefined) next.emailExpiryReminder = email.expiryReminder ? "true" : "false";
+        if (email.trafficReminder !== undefined) next.emailTrafficReminder = email.trafficReminder ? "true" : "false";
+        if (email.trafficReminderThreshold !== undefined) next.emailTrafficReminderThreshold = String(email.trafficReminderThreshold);
+        await db.setSettings(next);
+        console.info("[Settings] email settings updated");
       }
       return { success: true };
     }),

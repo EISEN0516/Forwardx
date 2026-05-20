@@ -9,6 +9,7 @@ import { appRouter } from "./routers";
 import { createContext } from "./_core/context";
 import { agentRouter } from "./agentRoutes";
 import { paymentCallbackRouter } from "./payment";
+import { migrationRouter } from "./migration";
 import { initDatabase } from "./db";
 import { installPanelLogger } from "./_core/panelLogger";
 import { startScheduler } from "./scheduler";
@@ -52,6 +53,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   app.use(cookieParser());
   app.use(agentRouter);
+  app.use(migrationRouter);
   app.use(
     "/api/trpc",
     createExpressMiddleware({

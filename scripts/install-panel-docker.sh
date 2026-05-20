@@ -7,7 +7,6 @@ REPO_URL="${FORWARDX_REPO_URL:-https://github.com/poouo/Forwardx.git}"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-forwardx}"
 CONTAINER_NAME="${FORWARDX_CONTAINER_NAME:-forwardx-panel}"
 PORT="${PORT:-3000}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
 
 require_root() {
   if [ "$(id -u)" != "0" ]; then
@@ -97,7 +96,6 @@ write_env() {
   cat > "$APP_DIR/.env" <<EOF
 PORT=$PORT
 JWT_SECRET=$jwt_secret
-ADMIN_PASSWORD=$ADMIN_PASSWORD
 COMPOSE_PROJECT_NAME=$PROJECT_NAME
 FORWARDX_CONTAINER_NAME=$CONTAINER_NAME
 EOF
@@ -116,8 +114,7 @@ install_panel() {
   write_env
   start_panel
   echo "[完成] ForwardX Docker 面板已启动：http://服务器IP:$PORT"
-  echo "[信息] 默认账号：admin"
-  echo "[信息] 默认密码：$ADMIN_PASSWORD"
+  echo "[信息] 首次打开面板后请配置 MySQL；如果连接旧数据库，将自动复用原有管理员和数据。"
 }
 
 upgrade_panel() {

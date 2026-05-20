@@ -1,4 +1,4 @@
-import crypto from "crypto";
+﻿import crypto from "crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   balanceTransactions, InsertBalanceTransaction,
@@ -13,7 +13,7 @@ import {
   userSubscriptions, InsertUserSubscription,
   users,
 } from "../../drizzle/schema";
-import { getDb, getSqlite, lastRowId, nowDate } from "../dbRuntime";
+import { executeRaw, getDb, insertAndGetId, nowDate } from "../dbRuntime";
 import { getHostById } from "./hostRepository";
 import { getTunnelById } from "./tunnelRepository";
 import { getUserById, resetUserTraffic, updateUserTrafficSettings } from "./userRepository";
@@ -94,8 +94,7 @@ export async function getSubscriptionPlanById(id: number) {
 export async function createSubscriptionPlan(data: InsertSubscriptionPlan, hostIds: number[], tunnelIds: number[]) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(subscriptionPlans).values(data);
-  const id = lastRowId();
+  const id = await insertAndGetId("subscription_plans", data as any);
   await setSubscriptionPlanResources(id, hostIds, tunnelIds);
   return getSubscriptionPlanById(id);
 }
@@ -164,7 +163,7 @@ export async function listUserSubscriptions(userId?: number) {
 export async function getActiveUserSubscriptions(userId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
   const conds: any[] = [
     eq(userSubscriptions.status, "active"),
     sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${now})`,
@@ -205,8 +204,7 @@ export async function getActiveUserSubscriptions(userId?: number) {
 export async function createUserSubscription(data: InsertUserSubscription) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(userSubscriptions).values(data);
-  return lastRowId();
+  return insertAndGetId("user_subscriptions", data as any);
 }
 
 export async function updateUserSubscription(id: number, data: Partial<InsertUserSubscription>) {
@@ -220,23 +218,25 @@ export async function cancelUserSubscription(id: number) {
 }
 
 export async function expireUserSubscriptions() {
-  const sqlite = getSqlite();
-  if (!sqlite) return 0;
-  const now = Math.floor(Date.now() / 1000);
-  const result = sqlite.prepare(`UPDATE user_subscriptions SET status='expired', updatedAt=? WHERE status='active' AND expiresAt IS NOT NULL AND expiresAt <= ?`).run(now, now);
-  return Number(result.changes || 0);
+  const db = await getDb();
+  if (!db) return 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const result: any = await executeRaw(
+    "UPDATE user_subscriptions SET status='expired', updatedAt=? WHERE status='active' AND expiresAt IS NOT NULL AND expiresAt <= ?",
+    [nowSec, nowSec],
+  );
+  return Number(result?.affectedRows ?? result?.changes ?? 0);
 }
 
 export async function rechargeSubscriptionTrafficCycles() {
   const db = await getDb();
   if (!db) return 0;
   const now = new Date();
-  const nowSec = Math.floor(now.getTime() / 1000);
   const due = await db.select().from(userSubscriptions).where(and(
     eq(userSubscriptions.status, "active"),
     sql`${userSubscriptions.nextTrafficResetAt} IS NOT NULL`,
-    sql`${userSubscriptions.nextTrafficResetAt} <= ${nowSec}`,
-    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${nowSec})`,
+    sql`${userSubscriptions.nextTrafficResetAt} <= ${now}`,
+    sql`(${userSubscriptions.expiresAt} IS NULL OR ${userSubscriptions.expiresAt} > ${now})`,
   ));
   const resetUserIds = new Set<number>();
   for (const sub of due as any[]) {
@@ -326,9 +326,9 @@ export async function applySubscriptionToUser(userId: number, planId: number, so
   if (!plan.isActive) throw new Error("套餐已停用");
   const hostIds = (plan as any).hostIds || [];
   const tunnelIds = (plan as any).tunnelIds || [];
-  if (hostIds.length === 0 && tunnelIds.length === 0) throw new Error("套餐未绑定任何主机或隧道");
+  if (hostIds.length === 0 && tunnelIds.length === 0) throw new Error("濂楅鏈粦瀹氫换浣曚富鏈烘垨闅ч亾");
   const block = await findAvailableSubscriptionPortBlock(Number(plan.portCount) || 1, hostIds, tunnelIds);
-  if (!block) throw new Error("套餐可用端口不足，无法分配连续端口段");
+  if (!block) throw new Error("濂楅鍙敤绔彛涓嶈冻锛屾棤娉曞垎閰嶈繛缁鍙ｆ");
   const now = startsAt || new Date();
   const durationDays = Number(overrideDurationDays || plan.durationDays);
   const expiresAt = durationDays > 0 ? new Date(now.getTime() + durationDays * 24 * 3600 * 1000) : null;
@@ -395,12 +395,12 @@ export async function listBalanceTransactions(userId?: number, limit = 100) {
 export async function addUserBalance(userId: number, amountCents: number, meta: Omit<InsertBalanceTransaction, "userId" | "amountCents" | "balanceAfterCents">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (!Number.isFinite(amountCents) || amountCents === 0) throw new Error("金额无效");
+  if (!Number.isFinite(amountCents) || amountCents === 0) throw new Error("閲戦鏃犳晥");
   const user = await getUserById(userId);
   if (!user) throw new Error("用户不存在");
   const current = Number((user as any).balanceCents || 0);
   const next = current + Math.round(amountCents);
-  if (next < 0) throw new Error("余额不足");
+  if (next < 0) throw new Error("浣欓涓嶈冻");
   await db.update(users).set({ balanceCents: next, updatedAt: nowDate() } as any).where(eq(users.id, userId));
   await db.insert(balanceTransactions).values({
     ...meta,
@@ -413,17 +413,17 @@ export async function addUserBalance(userId: number, amountCents: number, meta: 
 
 export async function purchasePlanWithBalance(userId: number, planId: number, discountCodeId?: number | null) {
   const plan = await getSubscriptionPlanById(planId);
-  if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("套餐不可购买");
+  if (!plan || !plan.isActive || !plan.isStoreVisible) throw new Error("濂楅涓嶅彲璐拱");
   const discount = discountCodeId ? await getDiscountCodeById(discountCodeId) : null;
   if (discount) {
     const allowedPlanIds = Array.isArray((discount as any).planIds) ? (discount as any).planIds.map(Number) : [];
     if (allowedPlanIds.length > 0 && !allowedPlanIds.includes(Number(planId))) {
-      throw new Error("折扣码不适用于该套餐");
+      throw new Error("鎶樻墸鐮佷笉閫傜敤浜庤濂楅");
     }
   }
   const amountCents = calculateDiscountedAmount(Number(plan.priceCents || 0), discount);
   const balance = await getUserBalance(userId);
-  if (balance < amountCents) throw new Error("余额不足");
+  if (balance < amountCents) throw new Error("浣欓涓嶈冻");
   const result = await applySubscriptionToUser(userId, planId, "balance", null);
   if (amountCents > 0) {
     await addUserBalance(userId, -amountCents, {
@@ -494,7 +494,7 @@ export async function redeemCode(userId: number, code: string) {
   if (item.usedAt || item.usedByUserId) throw new Error("兑换码已被使用");
   const now = new Date();
   if (item.startsAt && new Date(item.startsAt).getTime() > now.getTime()) throw new Error("兑换码尚未生效");
-  if (item.expiresAt && new Date(item.expiresAt).getTime() <= now.getTime()) throw new Error("兑换码已过期");
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= now.getTime()) throw new Error("鍏戞崲鐮佸凡杩囨湡");
   if (item.type === "balance") {
     if (Number(item.amountCents) <= 0) throw new Error("兑换码金额无效");
     await addUserBalance(userId, Number(item.amountCents), {
@@ -590,7 +590,7 @@ export function discountCodeStatus(code: any) {
 export function calculateDiscountedAmount(amountCents: number, code: any | null | undefined) {
   const amount = Math.max(0, Math.round(amountCents));
   if (!code) return amount;
-  if (discountCodeStatus(code) !== "active") throw new Error("折扣码不可用");
+  if (discountCodeStatus(code) !== "active") throw new Error("鎶樻墸鐮佷笉鍙敤");
   if (code.discountType === "percent") {
     const pct = Math.max(0, Math.min(100, Number(code.discountValue || 0)));
     return Math.max(0, Math.round(amount * (100 - pct) / 100));
@@ -601,10 +601,10 @@ export function calculateDiscountedAmount(amountCents: number, code: any | null 
 
 export async function previewDiscount(code: string, amountCents: number, planId?: number | null) {
   const item = await getDiscountCodeByCode(code);
-  if (!item) throw new Error("折扣码不存在");
+  if (!item) throw new Error("鎶樻墸鐮佷笉瀛樺湪");
   const allowedPlanIds = Array.isArray((item as any).planIds) ? (item as any).planIds.map(Number) : [];
   if (allowedPlanIds.length > 0 && (!planId || !allowedPlanIds.includes(Number(planId)))) {
-    throw new Error("折扣码不适用于该套餐");
+    throw new Error("鎶樻墸鐮佷笉閫傜敤浜庤濂楅");
   }
   const finalAmountCents = calculateDiscountedAmount(amountCents, item);
   return {
@@ -693,17 +693,23 @@ export async function markPaymentOrderPaid(outTradeNo: string, data: { tradeNo?:
 }
 
 export async function getPaymentOrderStats() {
-  const sqlite = getSqlite();
-  if (!sqlite) {
-    return { totalOrders: 0, pendingOrders: 0, paidOrders: 0, paidAmountCents: 0 };
-  }
-  const totalOrders = (sqlite.prepare(`SELECT COUNT(*) AS n FROM payment_orders`).get() as any)?.n || 0;
-  const pendingOrders = (sqlite.prepare(`SELECT COUNT(*) AS n FROM payment_orders WHERE status = 'pending'`).get() as any)?.n || 0;
-  const paid = sqlite.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amountCents), 0) AS amount FROM payment_orders WHERE status IN ('paid', 'completed')`).get() as any;
+  const db = await getDb();
+  if (!db) return { totalOrders: 0, pendingOrders: 0, paidOrders: 0, paidAmountCents: 0 };
+  const rows = await db
+    .select({
+      totalOrders: sql<number>`COUNT(*)`,
+      pendingOrders: sql<number>`SUM(CASE WHEN ${paymentOrders.status} = 'pending' THEN 1 ELSE 0 END)`,
+      paidOrders: sql<number>`SUM(CASE WHEN ${paymentOrders.status} IN ('paid', 'completed') THEN 1 ELSE 0 END)`,
+      paidAmountCents: sql<number>`COALESCE(SUM(CASE WHEN ${paymentOrders.status} IN ('paid', 'completed') THEN ${paymentOrders.amountCents} ELSE 0 END), 0)`,
+    })
+    .from(paymentOrders);
+  const row = rows[0];
   return {
-    totalOrders: Number(totalOrders),
-    pendingOrders: Number(pendingOrders),
-    paidOrders: Number(paid?.n || 0),
-    paidAmountCents: Number(paid?.amount || 0),
+    totalOrders: Number(row?.totalOrders || 0),
+    pendingOrders: Number(row?.pendingOrders || 0),
+    paidOrders: Number(row?.paidOrders || 0),
+    paidAmountCents: Number(row?.paidAmountCents || 0),
   };
 }
+
+

@@ -1,14 +1,13 @@
-import { desc, eq } from "drizzle-orm";
+﻿import { desc, eq } from "drizzle-orm";
 import { agentTokens, hosts, InsertAgentToken } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 
 // ==================== Agent Token Queries ====================
 
 export async function createAgentToken(data: InsertAgentToken) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(agentTokens).values(data);
-  return lastRowId();
+  return insertAndGetId("agent_tokens", data as any);
 }
 
 export async function getAgentTokenByToken(token: string) {
@@ -59,3 +58,4 @@ export async function deleteAgentToken(id: number) {
   }
   await db.delete(agentTokens).where(eq(agentTokens.id, id));
 }
+

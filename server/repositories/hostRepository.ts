@@ -1,6 +1,6 @@
-import { desc, eq, sql } from "drizzle-orm";
+﻿import { desc, eq, sql } from "drizzle-orm";
 import { hosts, InsertHost, forwardRules, hostMetrics, trafficStats } from "../../drizzle/schema";
-import { getDb, lastRowId, nowDate } from "../dbRuntime";
+import { getDb, insertAndGetId, nowDate } from "../dbRuntime";
 
 // ==================== Host Queries ====================
 
@@ -23,8 +23,7 @@ export async function getHostById(id: number) {
 export async function createHost(host: InsertHost) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(hosts).values(host);
-  return lastRowId();
+  return insertAndGetId("hosts", host as any);
 }
 
 export async function updateHost(id: number, data: Partial<InsertHost>) {
@@ -76,10 +75,11 @@ export async function getHostByAgentToken(token: string) {
   return r[0];
 }
 
-/** 获取主机下的转发规则数量 */
+/** 鑾峰彇涓绘満涓嬬殑杞彂瑙勫垯鏁伴噺 */
 export async function getHostRuleCount(hostId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const r = await db.select({ count: sql<number>`COUNT(*)` }).from(forwardRules).where(eq(forwardRules.hostId, hostId));
   return Number(r[0]?.count) || 0;
 }
+

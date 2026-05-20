@@ -16,12 +16,17 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [showCaptcha, setShowCaptcha] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
 
   const utils = trpc.useUtils();
+  const { data: emailConfig } = trpc.auth.emailConfig.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
 
   // 获取验证码
   const captchaQuery = trpc.auth.getCaptcha.useQuery(undefined, {
@@ -74,6 +79,11 @@ export default function Login() {
     },
   });
 
+  const sendEmailCodeMutation = trpc.auth.sendEmailCode.useMutation({
+    onSuccess: () => toast.success("验证码已发送，5 分钟内有效"),
+    onError: (error) => toast.error(error.message || "发送验证码失败"),
+  });
+
   // 切换到注册模式时自动显示验证码
   useEffect(() => {
     if (mode === "register") {
@@ -117,6 +127,16 @@ export default function Login() {
       toast.error("密码至少6个字符");
       return;
     }
+    if (emailConfig?.verifyRegistration) {
+      if (!email.trim()) {
+        toast.error("请填写邮箱地址");
+        return;
+      }
+      if (!emailCode.trim()) {
+        toast.error("请输入邮箱验证码");
+        return;
+      }
+    }
     if (!captchaAnswer.trim()) {
       toast.error("请输入验证码答案");
       return;
@@ -129,6 +149,8 @@ export default function Login() {
       username: username.trim(),
       password,
       name: name.trim() || undefined,
+      email: email.trim() || undefined,
+      emailCode: emailCode.trim() || undefined,
       captchaId: captchaQuery.data.captchaId,
       captchaAnswer: parseInt(captchaAnswer.trim(), 10),
     });
@@ -293,6 +315,37 @@ export default function Login() {
                   disabled={isPending}
                 />
               </div>
+              {emailConfig?.verifyRegistration && (
+                <div className="space-y-2">
+                  <Label htmlFor="reg-email">邮箱</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="reg-email"
+                      type="email"
+                      placeholder="用于接收验证码"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      disabled={isPending}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!email.trim() || sendEmailCodeMutation.isPending}
+                      onClick={() => sendEmailCodeMutation.mutate({ email: email.trim() })}
+                    >
+                      {sendEmailCodeMutation.isPending ? "发送中" : "发送验证码"}
+                    </Button>
+                  </div>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="请输入邮箱验证码"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    disabled={isPending}
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="reg-password">密码</Label>
                 <div className="relative">

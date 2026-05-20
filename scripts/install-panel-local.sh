@@ -6,7 +6,6 @@ APP_DIR="${FORWARDX_PANEL_DIR:-/opt/forwardx-panel}"
 SERVICE_NAME="${FORWARDX_SERVICE_NAME:-forwardx-panel}"
 REPO_URL="${FORWARDX_REPO_URL:-https://github.com/poouo/Forwardx.git}"
 PORT="${PORT:-3000}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
 
 require_root() {
   if [ "$(id -u)" != "0" ]; then
@@ -22,17 +21,17 @@ latest_tag() {
 install_deps() {
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
-    apt-get install -y -qq curl git ca-certificates build-essential python3 sqlite3 openssl >/dev/null
+    apt-get install -y -qq curl git ca-certificates build-essential python3 openssl >/dev/null
     if ! command -v node >/dev/null 2>&1; then
       curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
       apt-get install -y -qq nodejs >/dev/null
     fi
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q curl git ca-certificates gcc gcc-c++ make python3 sqlite openssl nodejs npm
+    dnf install -y -q curl git ca-certificates gcc gcc-c++ make python3 openssl nodejs npm
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q curl git ca-certificates gcc gcc-c++ make python3 sqlite openssl nodejs npm
+    yum install -y -q curl git ca-certificates gcc gcc-c++ make python3 openssl nodejs npm
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl git ca-certificates build-base python3 sqlite openssl nodejs npm
+    apk add --no-cache curl git ca-certificates build-base python3 openssl nodejs npm
   fi
 
   command -v node >/dev/null 2>&1 || { echo "[错误] Node.js 安装失败，请先安装 Node.js 22+"; exit 1; }
@@ -76,9 +75,10 @@ write_env() {
   cat > "$APP_DIR/.env" <<EOF
 NODE_ENV=production
 PORT=$PORT
+DATABASE_CONFIG_PATH=$APP_DIR/data/database.json
 SQLITE_PATH=$APP_DIR/data/forwardx.db
+MYSQL_CONFIG_PATH=$APP_DIR/data/mysql.json
 JWT_SECRET=$jwt_secret
-ADMIN_PASSWORD=$ADMIN_PASSWORD
 FORWARDX_UPGRADE_COMMAND="/bin/bash $APP_DIR/scripts/install-panel-local.sh upgrade"
 EOF
 }
@@ -114,8 +114,7 @@ install_panel() {
   write_service
   systemctl restart "$SERVICE_NAME"
   echo "[完成] ForwardX 面板已启动：http://服务器IP:$PORT"
-  echo "[信息] 默认账号：admin"
-  echo "[信息] 默认密码：$ADMIN_PASSWORD"
+  echo "[信息] 首次打开面板后请配置 MySQL；如果连接旧数据库，将自动复用原有管理员和数据。"
 }
 
 upgrade_panel() {
@@ -136,7 +135,7 @@ uninstall_panel() {
   rm -f "/etc/systemd/system/$SERVICE_NAME.service"
   systemctl daemon-reload
 
-  read -r -p "是否删除面板程序和 SQLite 数据库目录 $APP_DIR ? [y/N] " confirm
+  read -r -p "是否删除面板程序目录 $APP_DIR ? [y/N] " confirm
   case "$confirm" in
     y|Y|yes|YES)
       rm -rf "$APP_DIR"

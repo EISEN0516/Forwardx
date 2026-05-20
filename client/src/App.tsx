@@ -2,9 +2,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/_core/hooks/useAuth";
 import type { ComponentType } from "react";
+import { trpc } from "@/lib/trpc";
 import NotFound from "@/pages/NotFound";
 import Login from "@/pages/Login";
-import { Redirect, Route, Switch } from "wouter";
+import { Redirect, Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
@@ -19,6 +20,7 @@ import Store from "./pages/Store";
 import Billing from "./pages/Billing";
 import Wallet from "./pages/Wallet";
 import Announcements from "./pages/Announcements";
+import Setup from "./pages/Setup";
 
 function AdminRoute({ component: Component }: { component: ComponentType }) {
   const { user, loading } = useAuth();
@@ -31,6 +33,7 @@ function AdminRoute({ component: Component }: { component: ComponentType }) {
 function Router() {
   return (
     <Switch>
+      <Route path="/setup" component={Setup} />
       <Route path="/login" component={Login} />
       <Route path="/" component={Home} />
       <Route path="/hosts">{() => <AdminRoute component={Hosts} />}</Route>
@@ -50,13 +53,28 @@ function Router() {
   );
 }
 
+function SetupGate() {
+  const setup = trpc.setup.status.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const [location] = useLocation();
+
+  if (setup.isLoading) return null;
+
+  const ready = !!setup.data?.databaseConnected && !!setup.data?.schemaReady && !!setup.data?.hasAdmin;
+  if (!ready && location !== "/setup") return <Redirect to="/setup" />;
+  if (ready && location === "/setup") return <Redirect to="/login" />;
+  return <Router />;
+}
+
 function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <SetupGate />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

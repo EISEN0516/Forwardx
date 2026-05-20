@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { getEmailConfig, sendMail } from "./email";
 
 async function runMonthlyTrafficReset() {
   try {
@@ -55,6 +56,54 @@ async function runTcpingCleanup() {
   }
 }
 
+function dayKey(prefix: string, userId: number) {
+  return `${prefix}:${userId}:${new Date().toISOString().slice(0, 10)}`;
+}
+
+async function runEmailReminders() {
+  try {
+    const config = await getEmailConfig();
+    if (!config.enabled) return;
+    const users = await db.getUserTrafficSummaries();
+    const now = Date.now();
+
+    for (const user of users as any[]) {
+      if (!user.email) continue;
+
+      if (config.expiryReminder && user.expiresAt) {
+        const expiresAt = new Date(user.expiresAt).getTime();
+        const daysLeft = Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000));
+        const key = dayKey(`emailReminder:expiry:${daysLeft}`, user.id);
+        if (daysLeft >= 0 && daysLeft <= 3 && !(await db.getSetting(key))) {
+          await sendMail({
+            to: user.email,
+            subject: "ForwardX 套餐到期提醒",
+            text: `你的 ForwardX 套餐将在 ${daysLeft} 天后到期，请及时续费或联系管理员。`,
+          });
+          await db.setSetting(key, "sent");
+        }
+      }
+
+      if (config.trafficReminder && Number(user.trafficLimit || 0) > 0) {
+        const used = Number(user.trafficUsed || 0);
+        const limit = Number(user.trafficLimit || 0);
+        const leftPercent = Math.max(0, Math.round(((limit - used) / limit) * 100));
+        const key = dayKey("emailReminder:traffic", user.id);
+        if (leftPercent <= config.trafficReminderThreshold && !(await db.getSetting(key))) {
+          await sendMail({
+            to: user.email,
+            subject: "ForwardX 流量余量提醒",
+            text: `你的 ForwardX 流量剩余约 ${leftPercent}%，请及时续费或联系管理员。`,
+          });
+          await db.setSetting(key, "sent");
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[Scheduler] Email reminder error:", error);
+  }
+}
+
 export function startScheduler() {
   setInterval(async () => {
     const now = new Date();
@@ -73,12 +122,17 @@ export function startScheduler() {
     await runTcpingCleanup();
   }, 60 * 60 * 1000);
 
+  setInterval(async () => {
+    await runEmailReminders();
+  }, 6 * 60 * 60 * 1000);
+
   setTimeout(async () => {
     await runMonthlyTrafficReset();
     await runExpirationCheck();
     await runSelfTestTimeoutSweep();
     await runTcpingCleanup();
+    await runEmailReminders();
   }, 5000);
 
-  console.log("[Scheduler] Scheduled tasks started (monthly reset + expiration check + selftest timeout sweep + tcping cleanup)");
+  console.log("[Scheduler] Scheduled tasks started (monthly reset + expiration check + selftest timeout sweep + tcping cleanup + email reminders)");
 }
