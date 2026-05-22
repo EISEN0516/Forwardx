@@ -419,7 +419,10 @@ function TunnelsContent() {
   const openCreate = () => {
     resetForm();
     if (hosts && hosts.length >= 2) {
-      setForm({ ...defaultForm, entryHostId: hosts[0].id, exitHostId: hosts[1].id });
+      const fallbackMode = forwardProtocolSettings.forwardx !== false
+        ? "forwardx"
+        : enabledGostTunnelModes[0] || "forwardx";
+      setForm({ ...defaultForm, mode: fallbackMode, entryHostId: hosts[0].id, exitHostId: hosts[1].id });
     }
     setShowDialog(true);
   };

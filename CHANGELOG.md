@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.56] - 2026-05-22
+
+### Fixed
+
+- Fixed the tunnel creation dialog so it defaults to an enabled tunnel protocol when the ForwardX tunnel protocol is globally disabled.
+
+### Changed
+
+- Bumped panel version to 2.2.56. Agent version remains 2.2.45.
+
 ## [2.2.55] - 2026-05-22
 
 ### Added
