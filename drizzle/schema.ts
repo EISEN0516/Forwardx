@@ -114,6 +114,16 @@ export const users = table("users", {
   trafficAutoReset: boolean("trafficAutoReset").notNull().default(false), // 鏈堝害鑷姩閲嶇疆寮€鍏?
   trafficResetDay: int("trafficResetDay").notNull().default(1),     // 姣忔湀閲嶇疆鏃ワ紙1-28锛?
   lastTrafficReset: epoch("lastTrafficReset"), // 涓婃閲嶇疆鏃堕棿
+  telegramId: text("telegramId").unique(),
+  telegramUsername: text("telegramUsername"),
+  telegramFirstName: text("telegramFirstName"),
+  telegramLastName: text("telegramLastName"),
+  telegramLinkedAt: epoch("telegramLinkedAt"),
+  telegramLastSeenAt: epoch("telegramLastSeenAt"),
+  telegramBindCode: text("telegramBindCode").unique(),
+  telegramBindCodeExpiresAt: epoch("telegramBindCodeExpiresAt"),
+  telegramLoginCode: text("telegramLoginCode").unique(),
+  telegramLoginCodeExpiresAt: epoch("telegramLoginCodeExpiresAt"),
   createdAt: epoch("createdAt").notNull().default(nowDefault()),
   updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
   lastSignedIn: epoch("lastSignedIn").notNull().default(nowDefault()),

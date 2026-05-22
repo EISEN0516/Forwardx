@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.49] - 2026-05-22
+
+### Added
+
+- Added Telegram bot binding, usage lookup, rule management, traffic reset, and one-time panel login support.
+- Added project UTF-8 defaults for VSCode, EditorConfig, and Git text normalization.
+
+### Changed
+
+- Bumped panel version to 2.2.49. Agent version remains 2.2.45.
+
 ## [2.2.48] - 2026-05-20
 
 ### Changed

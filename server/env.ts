@@ -14,5 +14,7 @@ export const ENV = {
   // 管理后台一键升级命令。为空时只允许检查更新，不执行升级。
   // 执行时会注入 FORWARDX_TARGET_VERSION / FORWARDX_CURRENT_VERSION / FORWARDX_REPO_URL。
   upgradeCommand: process.env.FORWARDX_UPGRADE_COMMAND ?? "",
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  telegramBotPolling: process.env.TELEGRAM_BOT_POLLING !== "false",
   isProduction: process.env.NODE_ENV === "production",
 };

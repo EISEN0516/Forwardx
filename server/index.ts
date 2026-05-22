@@ -13,6 +13,7 @@ import { migrationRouter } from "./migration";
 import { initDatabase } from "./db";
 import { installPanelLogger } from "./_core/panelLogger";
 import { startScheduler } from "./scheduler";
+import { startTelegramBot } from "./telegramBot";
 
 installPanelLogger();
 
@@ -76,6 +77,9 @@ async function startServer() {
   });
 
   startScheduler();
+  startTelegramBot().catch((error) => {
+    console.warn(`[Telegram] Failed to start bot: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 startServer().catch(console.error);

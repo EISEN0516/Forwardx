@@ -48,6 +48,7 @@ import {
   Server,
   Gauge,
   WalletCards,
+  Send,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -426,13 +427,14 @@ function UsersContent() {
             </div>
           ) : users && users.length > 0 ? (
             <div className="overflow-x-auto">
-              <Table className="min-w-[1120px]">
+              <Table className="min-w-[1220px]">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="w-[60px] whitespace-nowrap">ID</TableHead>
                     <TableHead className="w-[240px] whitespace-nowrap">用户</TableHead>
                     <TableHead className="hidden w-[140px] whitespace-nowrap sm:table-cell">角色</TableHead>
                     <TableHead className="w-[170px] whitespace-nowrap">流量使用</TableHead>
+                    <TableHead className="hidden w-[140px] whitespace-nowrap xl:table-cell">Telegram</TableHead>
                     <TableHead className="hidden w-[120px] whitespace-nowrap md:table-cell">余额</TableHead>
                     <TableHead className="hidden w-[140px] whitespace-nowrap md:table-cell">到期时间</TableHead>
                     <TableHead className="hidden w-[130px] whitespace-nowrap lg:table-cell">权限</TableHead>
@@ -531,6 +533,23 @@ function UsersContent() {
                               />
                             )}
                           </div>
+                        </TableCell>
+                        <TableCell className="hidden xl:table-cell">
+                          {u.telegramId ? (
+                            <div className="flex items-center gap-2">
+                              <Send className="h-3.5 w-3.5 text-sky-500" />
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-medium">
+                                  {u.telegramUsername ? `@${u.telegramUsername}` : u.telegramFirstName || u.telegramId}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {u.telegramLinkedAt ? new Date(u.telegramLinkedAt).toLocaleDateString() : "已绑定"}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">未绑定</span>
+                          )}
                         </TableCell>
                         <TableCell className="hidden md:table-cell">
                           <span className="text-sm font-medium">

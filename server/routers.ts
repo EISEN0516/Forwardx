@@ -10,6 +10,7 @@ import { hostsRouter } from "./routers/hosts";
 import { plansRouter } from "./routers/plans";
 import { rulesRouter } from "./routers/rules";
 import { setupRouter } from "./routers/setup";
+import { telegramRouter } from "./routers/telegram";
 import { tunnelsRouter } from "./routers/tunnels";
 import { usersRouter } from "./routers/users";
 
@@ -25,6 +26,7 @@ export const appRouter = router({
   hosts: hostsRouter,
   rules: rulesRouter,
   tunnels: tunnelsRouter,
+  telegram: telegramRouter,
   agentTokens: agentTokensRouter,
   announcements: announcementsRouter,
 });

@@ -19,6 +19,27 @@ export async function getUserById(id: number) {
   return r[0];
 }
 
+export async function getUserByTelegramId(telegramId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(users).where(eq(users.telegramId, telegramId)).limit(1);
+  return r[0];
+}
+
+export async function getUserByTelegramBindCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(users).where(eq(users.telegramBindCode, code)).limit(1);
+  return r[0];
+}
+
+export async function getUserByTelegramLoginCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(users).where(eq(users.telegramLoginCode, code)).limit(1);
+  return r[0];
+}
+
 export async function authenticateUser(username: string, password: string) {
   const user = await getUserByUsername(username);
   if (!user) return null;
@@ -44,6 +65,133 @@ export async function updateUserProfile(userId: number, data: { name?: string; e
   const db = await getDb();
   if (!db) return;
   await db.update(users).set({ ...data, updatedAt: nowDate() }).where(eq(users.id, userId));
+}
+
+export async function createTelegramBindCode(userId: number, code: string, expiresAt: Date) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    telegramBindCode: code,
+    telegramBindCodeExpiresAt: expiresAt,
+    updatedAt: nowDate(),
+  }).where(eq(users.id, userId));
+}
+
+export async function clearTelegramBindCode(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    telegramBindCode: null,
+    telegramBindCodeExpiresAt: null,
+    updatedAt: nowDate(),
+  }).where(eq(users.id, userId));
+}
+
+export async function bindTelegramAccount(userId: number, telegram: {
+  id: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const now = nowDate();
+  const existing = await getUserByTelegramId(telegram.id);
+  if (existing && existing.id !== userId) {
+    await db.update(users).set({
+      telegramId: null,
+      telegramUsername: null,
+      telegramFirstName: null,
+      telegramLastName: null,
+      telegramLinkedAt: null,
+      telegramLastSeenAt: null,
+      telegramLoginCode: null,
+      telegramLoginCodeExpiresAt: null,
+      updatedAt: now,
+    }).where(eq(users.id, existing.id));
+  }
+  await db.update(users).set({
+    telegramId: telegram.id,
+    telegramUsername: telegram.username || null,
+    telegramFirstName: telegram.firstName || null,
+    telegramLastName: telegram.lastName || null,
+    telegramLinkedAt: now,
+    telegramLastSeenAt: now,
+    telegramBindCode: null,
+    telegramBindCodeExpiresAt: null,
+    updatedAt: now,
+  }).where(eq(users.id, userId));
+}
+
+export async function updateTelegramLastSeen(telegramId: string, telegram?: {
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const patch: Record<string, unknown> = {
+    telegramLastSeenAt: nowDate(),
+    updatedAt: nowDate(),
+  };
+  if (telegram) {
+    patch.telegramUsername = telegram.username || null;
+    patch.telegramFirstName = telegram.firstName || null;
+    patch.telegramLastName = telegram.lastName || null;
+  }
+  await db.update(users).set(patch).where(eq(users.telegramId, telegramId));
+}
+
+export async function unbindTelegramAccount(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    telegramId: null,
+    telegramUsername: null,
+    telegramFirstName: null,
+    telegramLastName: null,
+    telegramLinkedAt: null,
+    telegramLastSeenAt: null,
+    telegramBindCode: null,
+    telegramBindCodeExpiresAt: null,
+    telegramLoginCode: null,
+    telegramLoginCodeExpiresAt: null,
+    updatedAt: nowDate(),
+  }).where(eq(users.id, userId));
+}
+
+export async function createTelegramLoginCode(userId: number, code: string, expiresAt: Date) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({
+    telegramLoginCode: code,
+    telegramLoginCodeExpiresAt: expiresAt,
+    telegramLastSeenAt: nowDate(),
+    updatedAt: nowDate(),
+  }).where(eq(users.id, userId));
+}
+
+export async function consumeTelegramLoginCode(code: string) {
+  const user = await getUserByTelegramLoginCode(code);
+  if (!user) return null;
+  const expiresAt = user.telegramLoginCodeExpiresAt ? new Date(user.telegramLoginCodeExpiresAt).getTime() : 0;
+  const db = await getDb();
+  if (!db) return null;
+  if (!expiresAt || expiresAt <= Date.now()) {
+    await db.update(users).set({
+      telegramLoginCode: null,
+      telegramLoginCodeExpiresAt: null,
+      updatedAt: nowDate(),
+    }).where(eq(users.id, user.id));
+    return null;
+  }
+  await db.update(users).set({
+    telegramLoginCode: null,
+    telegramLoginCodeExpiresAt: null,
+    lastSignedIn: nowDate(),
+    updatedAt: nowDate(),
+  }).where(eq(users.id, user.id));
+  return user;
 }
 
 export async function createUser(data: { username: string; password: string; name?: string; email?: string; role?: "user" | "admin"; canAddRules?: boolean }) {
@@ -105,6 +253,12 @@ export async function getAllUsers() {
       trafficAutoReset: users.trafficAutoReset,
       trafficResetDay: users.trafficResetDay,
       lastTrafficReset: users.lastTrafficReset,
+      telegramId: users.telegramId,
+      telegramUsername: users.telegramUsername,
+      telegramFirstName: users.telegramFirstName,
+      telegramLastName: users.telegramLastName,
+      telegramLinkedAt: users.telegramLinkedAt,
+      telegramLastSeenAt: users.telegramLastSeenAt,
       createdAt: users.createdAt,
       lastSignedIn: users.lastSignedIn,
     })

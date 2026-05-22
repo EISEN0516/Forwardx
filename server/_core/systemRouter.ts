@@ -7,6 +7,7 @@ import fs from "fs";
 import { clearPanelLogs, getPanelLogs, getPanelLogSummary } from "./panelLogger";
 import { approveMigrationRequest, createMigrationCode, getCurrentMigrationCode, rejectMigrationRequest } from "../migrationCodes";
 import { sendMail } from "../email";
+import { refreshTelegramBotProfile, startTelegramBot } from "../telegramBot";
 
 /**
  * 系统级别 router：
@@ -18,7 +19,7 @@ import { sendMail } from "../email";
 export const REPO_URL = "https://github.com/poouo/Forwardx";
 /** Telegram 双向消息机器人：用户可通过此反馈问题、接收补充信息 */
 export const TELEGRAM_BOT_URL = "https://t.me/miyin_private_bot";
-export const APP_VERSION = "2.2.48";
+export const APP_VERSION = "2.2.49";
 export const AGENT_VERSION = "2.2.45";
 const UPDATE_CHECK_COOLDOWN_MS = 60 * 1000;
 const MANUAL_LOCAL_UPGRADE_COMMAND =
@@ -264,6 +265,18 @@ export const systemRouter = router({
         dockerSocket: fs.existsSync("/var/run/docker.sock"),
         commandConfigured: !!ENV.upgradeCommand.trim(),
       },
+      telegram: {
+        enabled: all.telegramBotEnabled === "true" || (!!ENV.telegramBotToken.trim() && all.telegramBotEnabled !== "false"),
+        configured: !!(ENV.telegramBotToken.trim() || String(all.telegramBotToken || "").trim()),
+        botUsername: all.telegramBotUsername ?? "",
+        tokenMasked: (() => {
+          const token = ENV.telegramBotToken.trim() || String(all.telegramBotToken || "").trim();
+          if (!token) return "";
+          return token.length <= 12 ? `${token.slice(0, 4)}...` : `${token.slice(0, 8)}...${token.slice(-4)}`;
+        })(),
+        tokenSource: ENV.telegramBotToken.trim() ? "env" : (all.telegramBotToken ? "database" : "none"),
+        polling: ENV.telegramBotPolling,
+      },
     };
   }),
 
@@ -285,6 +298,11 @@ export const systemRouter = router({
           expiryReminder: z.boolean().optional(),
           trafficReminder: z.boolean().optional(),
           trafficReminderThreshold: z.number().int().min(1).max(99).optional(),
+        }).optional(),
+        telegram: z.object({
+          enabled: z.boolean().optional(),
+          botToken: z.string().max(256).optional(),
+          clearToken: z.boolean().optional(),
         }).optional(),
       })
     )
@@ -319,6 +337,24 @@ export const systemRouter = router({
         if (email.trafficReminderThreshold !== undefined) next.emailTrafficReminderThreshold = String(email.trafficReminderThreshold);
         await db.setSettings(next);
         console.info("[Settings] email settings updated");
+      }
+      if (input.telegram) {
+        const next: Record<string, string | null> = {};
+        if (input.telegram.enabled !== undefined) next.telegramBotEnabled = input.telegram.enabled ? "true" : "false";
+        if (input.telegram.clearToken) next.telegramBotToken = null;
+        if (input.telegram.botToken !== undefined && input.telegram.botToken.trim()) {
+          next.telegramBotToken = input.telegram.botToken.trim();
+        }
+        await db.setSettings(next);
+        if (next.telegramBotToken || input.telegram.enabled) {
+          await refreshTelegramBotProfile().catch((error) => {
+            console.warn(`[Telegram] getMe after settings update failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          startTelegramBot().catch((error) => {
+            console.warn(`[Telegram] start after settings update failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
+        console.info("[Settings] telegram settings updated");
       }
       return { success: true };
     }),

@@ -24,6 +24,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [showCaptcha, setShowCaptcha] = useState(false);
+  const [telegramLoginCode, setTelegramLoginCode] = useState<string | null>(null);
   const { resolvedTheme, setTheme } = useTheme();
 
   useEffect(() => {
@@ -71,6 +72,17 @@ export default function Login() {
     },
   });
 
+  const telegramLoginMutation = trpc.telegram.login.useMutation({
+    onSuccess: () => {
+      toast.success("Telegram 登录成功");
+      utils.auth.me.invalidate();
+      window.location.href = "/";
+    },
+    onError: (error) => {
+      toast.error(error.message || "Telegram 登录失败");
+    },
+  });
+
   // 注册 mutation
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: (data) => {
@@ -98,6 +110,13 @@ export default function Login() {
       setShowCaptcha(true);
     }
   }, [mode]);
+
+  useEffect(() => {
+    const code = new URLSearchParams(location.split("?")[1] || "").get("tg");
+    if (!code || telegramLoginCode === code || telegramLoginMutation.isPending) return;
+    setTelegramLoginCode(code);
+    telegramLoginMutation.mutate({ code });
+  }, [location, telegramLoginCode, telegramLoginMutation]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,6 +188,7 @@ export default function Login() {
   };
 
   const isPending = loginMutation.isPending || registerMutation.isPending;
+  const isTelegramPending = telegramLoginMutation.isPending;
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background relative px-3 sm:px-4">
@@ -197,11 +217,16 @@ export default function Login() {
           </div>
           <CardTitle className="text-xl sm:text-2xl font-bold tracking-tight">ForwardX</CardTitle>
           <CardDescription className="text-muted-foreground">
-            {mode === "login" ? "端口转发集中管理面板" : "注册新账号"}
+            {isTelegramPending ? "正在通过 Telegram 登录" : mode === "login" ? "端口转发集中管理面板" : "注册新账号"}
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-4">
-          {mode === "login" ? (
+          {isTelegramPending ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span>正在验证一次性登录码...</span>
+            </div>
+          ) : mode === "login" ? (
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">用户名</Label>

@@ -893,6 +893,8 @@ function SystemInfoSection() {
   });
   const [panelUrlInput, setPanelUrlInput] = useState("");
   const [homepageEnabled, setHomepageEnabled] = useState(true);
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
   const [migrationCode, setMigrationCode] = useState<{
     code: string;
     expiresAt: number;
@@ -917,6 +919,7 @@ function SystemInfoSection() {
     if (settings) {
       setPanelUrlInput(settings.panelPublicUrl || "");
       setHomepageEnabled(settings.homepageEnabled ?? true);
+      setTelegramEnabled(!!settings.telegram?.enabled);
     }
   }, [settings]);
 
@@ -962,6 +965,27 @@ function SystemInfoSection() {
 
   const handleSaveHomepage = () => {
     updateSettingsMutation.mutate({ homepageEnabled });
+  };
+
+  const handleSaveTelegram = () => {
+    updateSettingsMutation.mutate({
+      telegram: {
+        enabled: telegramEnabled,
+        botToken: telegramBotTokenInput.trim() || undefined,
+      },
+    });
+    setTelegramBotTokenInput("");
+  };
+
+  const handleClearTelegramToken = () => {
+    updateSettingsMutation.mutate({
+      telegram: {
+        enabled: false,
+        clearToken: true,
+      },
+    });
+    setTelegramEnabled(false);
+    setTelegramBotTokenInput("");
   };
 
   const createMigrationCodeMutation = trpc.system.createMigrationCode.useMutation({
@@ -1114,6 +1138,62 @@ function SystemInfoSection() {
             <Button variant="outline" onClick={handleSaveHomepage} disabled={updateSettingsMutation.isPending}>
               {updateSettingsMutation.isPending ? "保存中..." : "保存首页开关"}
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Send className="h-4 w-4 text-sky-500" />
+              Telegram 机器人
+            </CardTitle>
+            <CardDescription>
+              绑定 Bot Token 后，用户可通过 Telegram 查询用量、管理规则并生成网页登录链接。环境变量 TELEGRAM_BOT_TOKEN 优先级最高。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 p-3">
+              <div>
+                <p className="text-sm font-medium">启用 Telegram Bot</p>
+                <p className="text-xs text-muted-foreground">
+                  当前状态：{settings?.telegram?.configured ? "已配置" : "未配置"}
+                  {settings?.telegram?.botUsername ? `，@${settings.telegram.botUsername}` : ""}
+                </p>
+              </div>
+              <Switch checked={telegramEnabled} onCheckedChange={setTelegramEnabled} />
+            </div>
+            <div className="space-y-2">
+              <Label>Bot Token</Label>
+              <Input
+                type="password"
+                placeholder={settings?.telegram?.tokenMasked || "从 @BotFather 获取，例如 123456:ABC..."}
+                value={telegramBotTokenInput}
+                onChange={(e) => setTelegramBotTokenInput(e.target.value)}
+                disabled={settings?.telegram?.tokenSource === "env"}
+              />
+              <p className="text-xs text-muted-foreground">
+                来源：{settings?.telegram?.tokenSource === "env" ? "环境变量 TELEGRAM_BOT_TOKEN" : settings?.telegram?.tokenSource === "database" ? "数据库配置" : "未配置"}。
+                机器人使用长轮询，无需配置 webhook。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleSaveTelegram} disabled={updateSettingsMutation.isPending}>
+                {updateSettingsMutation.isPending ? "保存中..." : "保存机器人配置"}
+              </Button>
+              {settings?.telegram?.tokenSource === "database" && (
+                <Button variant="outline" onClick={handleClearTelegramToken} disabled={updateSettingsMutation.isPending}>
+                  清空 Token
+                </Button>
+              )}
+              {settings?.telegram?.botUsername && (
+                <Button variant="ghost" asChild className="gap-2">
+                  <a href={`https://t.me/${settings.telegram.botUsername}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    打开机器人
+                  </a>
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
 

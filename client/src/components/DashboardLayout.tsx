@@ -47,6 +47,9 @@ import {
   ShoppingBag,
   Megaphone,
   Mail,
+  Send,
+  Copy,
+  Link2Off,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -146,7 +149,14 @@ function DashboardLayoutContent({
     refetchOnWindowFocus: false,
     retry: false,
   });
+  const { data: telegramStatus } = trpc.telegram.status.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const [showAnnouncement, setShowAnnouncement] = useState(false);
+  const [showTelegramDialog, setShowTelegramDialog] = useState(false);
+  const [telegramBind, setTelegramBind] = useState<any | null>(null);
 
   useEffect(() => {
     if (popupAnnouncement?.id) setShowAnnouncement(true);
@@ -178,6 +188,26 @@ function DashboardLayoutContent({
     },
   });
 
+  const createTelegramBindMutation = trpc.telegram.createBindCode.useMutation({
+    onSuccess: (data) => {
+      setTelegramBind(data);
+      setShowTelegramDialog(true);
+      utils.telegram.status.invalidate();
+      toast.success("Telegram 绑定码已生成");
+    },
+    onError: (error) => toast.error(error.message || "生成 Telegram 绑定码失败"),
+  });
+
+  const unbindTelegramMutation = trpc.telegram.unbind.useMutation({
+    onSuccess: () => {
+      setTelegramBind(null);
+      utils.telegram.status.invalidate();
+      toast.success("Telegram 已解绑");
+      setShowTelegramDialog(false);
+    },
+    onError: (error) => toast.error(error.message || "解绑 Telegram 失败"),
+  });
+
   const handleChangePassword = () => {
     if (!oldPassword) {
       toast.error("请输入当前密码");
@@ -193,6 +223,27 @@ function DashboardLayoutContent({
     }
     changePasswordMutation.mutate({ oldPassword, newPassword });
   };
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("已复制到剪贴板");
+    } catch {
+      toast.error("复制失败，请手动复制");
+    }
+  };
+
+  const openTelegramDialog = () => {
+    if (telegramStatus?.bound) {
+      setShowTelegramDialog(true);
+      return;
+    }
+    createTelegramBindMutation.mutate();
+  };
+
+  const telegramBindUrl = telegramBind?.botUsername && telegramBind?.code
+    ? `https://t.me/${telegramBind.botUsername}?start=${encodeURIComponent(telegramBind.code)}`
+    : "";
 
   const toggleTheme = () => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark");
@@ -396,6 +447,13 @@ function DashboardLayoutContent({
                 <KeyRound className="mr-2 h-4 w-4" />
                 <span>修改密码</span>
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={openTelegramDialog}
+                className="cursor-pointer"
+              >
+                <Send className="mr-2 h-4 w-4" />
+                <span>{telegramStatus?.bound ? "Telegram 已绑定" : "绑定 Telegram"}</span>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={logout}
@@ -485,6 +543,77 @@ function DashboardLayoutContent({
             >
               {changePasswordMutation.isPending ? "修改中..." : "确认修改"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTelegramDialog} onOpenChange={setShowTelegramDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle className="flex items-center gap-2">
+            <Send className="h-5 w-5 text-sky-500" />
+            Telegram 绑定
+          </DialogTitle>
+          <DialogDescription>
+            绑定后可在 Telegram 查询用量、管理自己的转发规则，并生成网页登录链接。
+          </DialogDescription>
+          <div className="space-y-4 py-2">
+            {telegramStatus?.bound ? (
+              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
+                <p className="text-sm font-medium">
+                  {telegramStatus.account?.username ? `@${telegramStatus.account.username}` : telegramStatus.account?.id}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  绑定时间：{telegramStatus.account?.linkedAt ? new Date(telegramStatus.account.linkedAt).toLocaleString() : "-"}
+                </p>
+              </div>
+            ) : telegramBind ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                  <p className="text-xs text-muted-foreground">绑定码</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <code className="flex-1 break-all font-mono text-lg font-semibold tracking-widest">{telegramBind.code}</code>
+                    <Button variant="outline" size="icon" onClick={() => copyText(telegramBind.code)}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  点击下方按钮打开 Telegram 后点 Start 即可绑定。也可以手动发送 <code>/bind {telegramBind.code}</code>。
+                </p>
+                {telegramBindUrl && (
+                  <Button variant="outline" asChild className="w-full gap-2">
+                    <a href={telegramBindUrl} target="_blank" rel="noopener noreferrer">
+                      <Send className="h-4 w-4" />
+                      使用 Telegram 绑定
+                    </a>
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-sm text-muted-foreground">
+                {telegramStatus?.configured ? "点击下方按钮生成绑定码。" : "管理员尚未配置 Telegram Bot Token。"}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            {telegramStatus?.bound ? (
+              <Button
+                variant="destructive"
+                className="gap-2"
+                onClick={() => unbindTelegramMutation.mutate()}
+                disabled={unbindTelegramMutation.isPending}
+              >
+                <Link2Off className="h-4 w-4" />
+                解除绑定
+              </Button>
+            ) : (
+              <Button
+                onClick={() => createTelegramBindMutation.mutate()}
+                disabled={createTelegramBindMutation.isPending || telegramStatus?.configured === false}
+              >
+                {createTelegramBindMutation.isPending ? "生成中..." : "生成绑定码"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
