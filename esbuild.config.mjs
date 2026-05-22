@@ -20,11 +20,11 @@ await build({
     // Required for ESM compatibility with __dirname and require
     js: `
 import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { fileURLToPath as __forwardxFileURLToPath } from 'url';
+import { dirname as __forwardxDirname } from 'path';
 const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __filename = __forwardxFileURLToPath(import.meta.url);
+const __dirname = __forwardxDirname(__filename);
 `,
   },
 });

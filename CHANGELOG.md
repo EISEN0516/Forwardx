@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.54] - 2026-05-22
+
+### Fixed
+
+- Fixed production startup after v2.2.53 by avoiding a duplicate `fileURLToPath` declaration in the bundled server output.
+
+### Changed
+
+- Bumped panel version to 2.2.54. Agent version remains 2.2.45.
+
 ## [2.2.53] - 2026-05-22
 
 ### Added
