@@ -68,6 +68,8 @@ type TunnelForm = {
   exitHostId: number | null;
   mode: "forwardx" | "tls" | "wss" | "tcp" | "mtls" | "mwss" | "mtcp";
   listenPort: number;
+  networkType: "public" | "private";
+  connectHost: string;
   blockHttp: boolean;
   blockSocks: boolean;
   blockTls: boolean;
@@ -79,6 +81,8 @@ const defaultForm: TunnelForm = {
   exitHostId: null,
   mode: "forwardx",
   listenPort: 0,
+  networkType: "public",
+  connectHost: "",
   blockHttp: false,
   blockSocks: false,
   blockTls: false,
@@ -86,6 +90,33 @@ const defaultForm: TunnelForm = {
 
 function isValidPort(port: number, allowZero = false) {
   return Number.isInteger(port) && port >= (allowZero ? 0 : 1) && port <= 65535;
+}
+
+function isValidIpAddress(value: string) {
+  const v = value.trim();
+  if (!v) return false;
+  const ipv4Parts = v.split(".");
+  if (ipv4Parts.length === 4 && ipv4Parts.every((part) => /^\d{1,3}$/.test(part))) {
+    return ipv4Parts.every((part) => {
+      const n = Number(part);
+      return n >= 0 && n <= 255 && String(n) === String(Number(part));
+    });
+  }
+  if (!v.includes(":") || v.includes("[") || v.includes("]")) return false;
+  try {
+    const url = new URL(`http://[${v}]/`);
+    return !!url.hostname;
+  } catch {
+    return false;
+  }
+}
+
+function tunnelHostCandidates(host: any | null | undefined) {
+  if (!host) return [];
+  const values = [host.entryIp, host.ipv4, host.ipv6, host.ip]
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && isValidIpAddress(item));
+  return Array.from(new Set(values));
 }
 
 const tunnelModeLabels: Record<TunnelForm["mode"], string> = {
@@ -412,6 +443,11 @@ function TunnelsContent() {
     [forwardProtocolSettings]
   );
   const activeCount = useMemo(() => tunnels?.filter((t: any) => t.isRunning && isTunnelSupported(t)).length ?? 0, [forwardProtocolSettings, tunnels]);
+  const selectedExitHost = useMemo(
+    () => hosts?.find((h: any) => h.id === form.exitHostId),
+    [hosts, form.exitHostId]
+  );
+  const connectHostOptions = useMemo(() => tunnelHostCandidates(selectedExitHost), [selectedExitHost]);
   const getHostName = (id: number) => hosts?.find((h: any) => h.id === id)?.name || `主机 #${id}`;
 
   const resetForm = () => {
@@ -441,6 +477,8 @@ function TunnelsContent() {
       exitHostId: tunnel.exitHostId,
       mode: tunnel.mode || "tls",
       listenPort: tunnel.listenPort,
+      networkType: tunnel.networkType === "private" ? "private" : "public",
+      connectHost: tunnel.connectHost || "",
       blockHttp: !!tunnel.blockHttp,
       blockSocks: !!tunnel.blockSocks,
       blockTls: !!tunnel.blockTls,
@@ -495,12 +533,19 @@ function TunnelsContent() {
       toast.error(unsupportedProtocolTitle);
       return;
     }
+    const connectHost = form.connectHost.trim();
+    if (form.networkType === "private" && !isValidIpAddress(connectHost)) {
+      toast.error("请输入有效的内网隧道连接 IP");
+      return;
+    }
     const payload = {
       name: form.name,
       entryHostId: form.entryHostId,
       exitHostId: form.exitHostId,
       mode: form.mode,
       listenPort: form.listenPort,
+      networkType: form.networkType,
+      connectHost: form.networkType === "private" ? connectHost : null,
       blockHttp: form.blockHttp,
       blockSocks: form.blockSocks,
       blockTls: form.blockTls,
@@ -601,13 +646,23 @@ function TunnelsContent() {
                           <span>{getHostName(tunnel.entryHostId)}</span>
                           <ArrowRight className="h-3 w-3 text-muted-foreground" />
                           <span>{getHostName(tunnel.exitHostId)}</span>
+                          {tunnel.networkType === "private" && (
+                            <span className="max-w-[150px] truncate rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground" title={tunnel.connectHost || ""}>
+                              内网 {tunnel.connectHost || "-"}
+                            </span>
+                          )}
                           <code className="rounded bg-muted/40 px-1.5 py-0.5">:{tunnel.listenPort}</code>
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        <Badge variant="outline" className="text-[10px]">
-                          {tunnelModeLabels[tunnel.mode as TunnelForm["mode"]] || String(tunnel.mode).toUpperCase()}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px]">
+                            {tunnelModeLabels[tunnel.mode as TunnelForm["mode"]] || String(tunnel.mode).toUpperCase()}
+                          </Badge>
+                          <Badge variant={tunnel.networkType === "private" ? "secondary" : "outline"} className="text-[10px]">
+                            {tunnel.networkType === "private" ? "内网" : "公网"}
+                          </Badge>
+                        </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         {tunnel.lastTestStatus === "success" ? (
@@ -726,6 +781,52 @@ function TunnelsContent() {
             <div className="space-y-2">
               <Label>隧道名称</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如: 华东-香港隧道" />
+            </div>
+            <div className="space-y-2">
+              <Label>链路网络</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, networkType: "public" })}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    form.networkType === "public"
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border bg-background hover:border-primary/40"
+                  }`}
+                >
+                  <span className="block font-medium">公网隧道</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">使用出口 Agent 入口地址连接</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, networkType: "private" })}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    form.networkType === "private"
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border bg-background hover:border-primary/40"
+                  }`}
+                >
+                  <span className="block font-medium">内网隧道</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">指定入口 Agent 可访问的出口 IP</span>
+                </button>
+              </div>
+              {form.networkType === "private" && (
+                <div className="space-y-2">
+                  <Input
+                    list="tunnel-connect-host-options"
+                    value={form.connectHost}
+                    onChange={(e) => setForm({ ...form, connectHost: e.target.value })}
+                    placeholder="例如 10.0.0.8 或 fd00::8"
+                    aria-label="内网隧道连接 IP"
+                  />
+                  <datalist id="tunnel-connect-host-options">
+                    {connectHostOptions.map((ip) => <option key={ip} value={ip} />)}
+                  </datalist>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    可选择出口 Agent 已记录的地址，也可以直接输入自定义 IPv4 / IPv6。
+                  </p>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>隧道类型</Label>

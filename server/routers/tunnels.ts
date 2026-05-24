@@ -1,11 +1,30 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import crypto from "crypto";
+import { isIP } from "net";
 import * as db from "../db";
 import { appendPanelLog } from "../_core/panelLogger";
 import { pushAgentRefresh } from "../agentEvents";
 import { pushTunnelEndpointRefresh, requireHostAccess } from "./helpers";
 import { requireTunnelProtocolEnabled } from "../forwardProtocolSettings";
+
+const tunnelNetworkTypeSchema = z.enum(["public", "private"]);
+
+const normalizeTunnelConnect = (networkType: "public" | "private", connectHost?: string | null) => {
+  const host = String(connectHost || "").trim();
+  if (networkType === "private") {
+    if (!host || isIP(host) === 0) throw new Error("内网隧道连接 IP 无效");
+    return host;
+  }
+  return null;
+};
+
+const getTunnelDialHost = (tunnel: any, exit: any) => {
+  if (String(tunnel?.networkType || "public") === "private") {
+    return String(tunnel?.connectHost || "").trim();
+  }
+  return String((exit as any).entryIp || (exit as any).ipv4 || (exit as any).ipv6 || exit?.ip || "").trim();
+};
 
 export const tunnelsRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -39,6 +58,8 @@ export const tunnelsRouter = router({
         listenPort: z.number().min(0).max(65535).optional().default(0),
         portRangeStart: z.number().int().min(1).max(65535).nullable().optional(),
         portRangeEnd: z.number().int().min(1).max(65535).nullable().optional(),
+        networkType: tunnelNetworkTypeSchema.optional().default("public"),
+        connectHost: z.string().max(128).nullable().optional(),
         blockHttp: z.boolean().optional().default(false),
         blockSocks: z.boolean().optional().default(false),
         blockTls: z.boolean().optional().default(false),
@@ -72,10 +93,13 @@ export const tunnelsRouter = router({
           if (!listenPort) throw new Error("出口 Agent 已无可用隧道端口");
         }
         const secret = crypto.randomBytes(32).toString("hex");
+        const connectHost = normalizeTunnelConnect(input.networkType, input.connectHost);
         const id = await db.createTunnel({
           ...input,
           portRangeStart: input.portRangeStart ?? null,
           portRangeEnd: input.portRangeEnd ?? null,
+          networkType: input.networkType,
+          connectHost,
           blockHttp: !!input.blockHttp,
           blockSocks: !!input.blockSocks,
           blockTls: !!input.blockTls,
@@ -96,6 +120,8 @@ export const tunnelsRouter = router({
         listenPort: z.number().min(0).max(65535).optional(),
         portRangeStart: z.number().int().min(1).max(65535).nullable().optional(),
         portRangeEnd: z.number().int().min(1).max(65535).nullable().optional(),
+        networkType: tunnelNetworkTypeSchema.optional(),
+        connectHost: z.string().max(128).nullable().optional(),
         blockHttp: z.boolean().optional(),
         blockSocks: z.boolean().optional(),
         blockTls: z.boolean().optional(),
@@ -139,7 +165,13 @@ export const tunnelsRouter = router({
             (data as any).listenPort = listenPort;
           }
         }
-        const keyChanged = ["entryHostId", "exitHostId", "mode", "listenPort", "isEnabled", "portRangeStart", "portRangeEnd", "blockHttp", "blockSocks", "blockTls"].some((key) => (data as any)[key] !== undefined && (data as any)[key] !== (tunnel as any)[key]);
+        if ((data as any).networkType !== undefined || (data as any).connectHost !== undefined) {
+          const nextNetworkType = ((data as any).networkType ?? (tunnel as any).networkType ?? "public") as "public" | "private";
+          const nextConnectHost = (data as any).connectHost !== undefined ? (data as any).connectHost : (tunnel as any).connectHost;
+          (data as any).networkType = nextNetworkType;
+          (data as any).connectHost = normalizeTunnelConnect(nextNetworkType, nextConnectHost);
+        }
+        const keyChanged = ["entryHostId", "exitHostId", "mode", "listenPort", "isEnabled", "portRangeStart", "portRangeEnd", "networkType", "connectHost", "blockHttp", "blockSocks", "blockTls"].some((key) => (data as any)[key] !== undefined && (data as any)[key] !== (tunnel as any)[key]);
         const enabledChanged = (data as any).isEnabled !== undefined && (data as any).isEnabled !== (tunnel as any).isEnabled;
         if (keyChanged) (data as any).isRunning = false;
         await db.updateTunnel(id, data as any);
@@ -189,7 +221,7 @@ export const tunnelsRouter = router({
               : `[TunnelTest] tunnel=${tunnel.id} exit service not applied yet; exit Agent event stream unavailable, test will still be queued`
           );
         }
-        const target = String((exit as any).entryIp || (exit as any).ipv4 || (exit as any).ipv6 || exit.ip || "").trim();
+        const target = getTunnelDialHost(tunnel, exit);
         const targetPort = Number(tunnel.listenPort);
         if (!target || !targetPort) {
           const message = `TUNNEL_TEST_TARGET_INVALID target=${target || "-"} port=${targetPort || "-"}`;

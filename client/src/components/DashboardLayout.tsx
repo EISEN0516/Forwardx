@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,6 +53,9 @@ import {
   Copy,
   Link2Off,
   Coins,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -82,6 +86,45 @@ const adminMenuItems = [
   { icon: Mail, label: "邮箱设置", path: "/email-settings" },
   { icon: Settings, label: "系统设置", path: "/settings" },
 ];
+
+function getLayoutUpgradeProgress(job: any) {
+  const status = job?.status || "idle";
+  const logs = Array.isArray(job?.logs) ? job.logs.join("\n") : "";
+  const matched = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(logs));
+  const steps = [
+    { label: "准备升级", done: status !== "idle" && matched([/开始升级/i, /start/i]) },
+    {
+      label: "拉取与准备依赖",
+      done: matched([
+        /Cloning into/i,
+        /git (fetch|pull|checkout)/i,
+        /load metadata/i,
+        /load build context/i,
+        /pnpm install/i,
+        /npm install/i,
+        /downloaded/i,
+        /Lockfile is up to date/i,
+      ]),
+    },
+    { label: "构建新版本", done: matched([/pnpm build/i, /vite .*building/i, /modules transformed/i, /Server build complete/i, /exporting layers/i]) },
+    { label: "重启服务", done: matched([/Container .* (Creating|Created|Starting|Started)/i, /docker compose up/i, /systemctl restart/i, /已启动/i, /recreate/i]) },
+  ];
+
+  if (status === "success") {
+    return { percent: 100, label: "升级完成，正在等待面板恢复", steps: steps.map((step) => ({ ...step, done: true, active: false })) };
+  }
+  if (status === "error") {
+    const doneCount = steps.filter((step) => step.done).length;
+    const activeIndex = Math.min(doneCount, steps.length - 1);
+    return { percent: Math.max(10, doneCount * 22), label: "升级异常", steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
+  }
+  if (status === "running") {
+    const doneCount = steps.filter((step) => step.done).length;
+    const activeIndex = Math.min(doneCount, steps.length - 1);
+    return { percent: Math.min(92, Math.max(12, doneCount * 22 + 8)), label: steps[activeIndex]?.label || "正在升级", steps: steps.map((step, index) => ({ ...step, active: index === activeIndex && !step.done })) };
+  }
+  return { percent: 0, label: "等待确认升级", steps: steps.map((step) => ({ ...step, active: false })) };
+}
 
 export default function DashboardLayout({
   children,
@@ -165,11 +208,41 @@ function DashboardLayoutContent({
   });
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showTelegramDialog, setShowTelegramDialog] = useState(false);
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+  const [upgradeRefreshScheduled, setUpgradeRefreshScheduled] = useState(false);
   const [telegramBind, setTelegramBind] = useState<any | null>(null);
+  const { data: upgradeStatus, refetch: refetchUpgradeStatus } = trpc.system.upgradeStatus.useQuery(undefined, {
+    enabled: isAdmin && showUpgradeDialog,
+    refetchInterval: (query) => {
+      const status = (query.state.data as any)?.job?.status;
+      return status === "running" ? 2000 : false;
+    },
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+
+  const startUpgradeMutation = trpc.system.startUpgrade.useMutation({
+    onSuccess: () => {
+      toast.success("升级任务已启动");
+      refetchUpgradeStatus();
+    },
+    onError: (error) => toast.error(error.message || "启动升级失败"),
+  });
 
   useEffect(() => {
     if (popupAnnouncement?.id) setShowAnnouncement(true);
   }, [popupAnnouncement?.id]);
+
+  useEffect(() => {
+    if (!showUpgradeDialog) return;
+    if (upgradeStatus?.job?.status !== "success") return;
+    if (upgradeRefreshScheduled) return;
+    setUpgradeRefreshScheduled(true);
+    const timer = window.setTimeout(() => {
+      window.location.reload();
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [showUpgradeDialog, upgradeRefreshScheduled, upgradeStatus?.job?.status]);
 
   const dismissAnnouncement = trpc.announcements.dismiss.useMutation({
     onSuccess: () => {
@@ -482,7 +555,10 @@ function DashboardLayoutContent({
               <DropdownMenuSeparator />
               {isAdmin && updateInfo?.hasUpdate && (
                 <DropdownMenuItem
-                  onClick={() => setLocation("/settings?tab=system")}
+                  onClick={() => {
+                    setShowUpgradeDialog(true);
+                    refetchUpgradeStatus();
+                  }}
                   className="cursor-pointer text-primary focus:text-primary"
                 >
                   <Rocket className="mr-2 h-4 w-4" />
@@ -565,6 +641,116 @@ function DashboardLayoutContent({
           </div>
         </footer>
       </SidebarInset>
+
+      <Dialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogTitle className="flex items-center gap-2">
+            <Rocket className="h-5 w-5 text-primary" />
+            发现新版本
+          </DialogTitle>
+          <DialogDescription>
+            升级会在后台执行，过程中面板可能短暂不可用，完成后会自动重启并刷新页面。
+          </DialogDescription>
+          {(() => {
+            const job = upgradeStatus?.job;
+            const progress = getLayoutUpgradeProgress(job);
+            const isRunning = job?.status === "running";
+            const isSuccess = job?.status === "success";
+            const isError = job?.status === "error";
+            const targetVersion = updateInfo?.latestVersion || upgradeStatus?.update?.latestVersion || job?.targetVersion || "-";
+            const currentVersion = upgradeStatus?.currentVersion || updateInfo?.currentVersion || "-";
+            const logs = (job?.logs || []).slice(-24).join("\n");
+            return (
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/40 bg-muted/20 p-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">当前版本</p>
+                    <p className="mt-1 font-mono">v{currentVersion}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">目标版本</p>
+                    <p className="mt-1 font-mono">{String(targetVersion).startsWith("v") ? targetVersion : `v${targetVersion}`}</p>
+                  </div>
+                </div>
+
+                {upgradeStatus?.upgradeEnabled === false && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    当前环境未配置自动升级命令，无法在面板内一键升级。
+                  </div>
+                )}
+
+                {(isRunning || isSuccess || isError) && (
+                  <div className="space-y-3 rounded-lg border border-border/40 bg-background/60 p-3">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-medium">{progress.label}</span>
+                      <span className="text-xs text-muted-foreground">{progress.percent}%</span>
+                    </div>
+                    <Progress value={progress.percent} className="h-2" />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {progress.steps.map((step) => (
+                        <div key={step.label} className="flex items-center gap-2 text-xs">
+                          {step.done ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : step.active ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                          ) : (
+                            <span className="h-3.5 w-3.5 rounded-full border border-border" />
+                          )}
+                          <span className={step.done || step.active ? "text-foreground" : "text-muted-foreground"}>{step.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {isError && (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    <div className="flex items-center gap-2 font-medium">
+                      <AlertTriangle className="h-4 w-4" />
+                      升级失败
+                    </div>
+                    <p className="mt-1 text-xs">{job?.error || "升级命令执行失败，请到系统设置查看日志。"}</p>
+                  </div>
+                )}
+
+                {isSuccess && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                    升级任务已完成，面板正在重启。页面将自动刷新。
+                  </div>
+                )}
+
+                {logs && (
+                  <pre className="max-h-40 overflow-auto rounded-lg border border-border/40 bg-muted/30 p-3 text-[11px] leading-5 text-muted-foreground">
+                    {logs}
+                  </pre>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowUpgradeDialog(false)}>
+              {upgradeStatus?.job?.status === "running" ? "后台执行" : "取消"}
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={
+                !updateInfo?.latestVersion ||
+                upgradeStatus?.upgradeEnabled === false ||
+                upgradeStatus?.job?.status === "running" ||
+                startUpgradeMutation.isPending
+              }
+              onClick={() => updateInfo?.latestVersion && startUpgradeMutation.mutate({ targetVersion: updateInfo.latestVersion })}
+            >
+              {startUpgradeMutation.isPending || upgradeStatus?.job?.status === "running" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Rocket className="h-4 w-4" />
+              )}
+              {upgradeStatus?.job?.status === "running" ? "升级中..." : "确认升级"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Change Password Dialog */}
       <Dialog open={showChangePassword} onOpenChange={setShowChangePassword}>

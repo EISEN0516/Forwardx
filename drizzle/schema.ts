@@ -202,6 +202,8 @@ export const tunnels = table("tunnels", {
   listenPort: int("listenPort").notNull(),
   portRangeStart: int("portRangeStart"),
   portRangeEnd: int("portRangeEnd"),
+  networkType: varchar("networkType", { length: 32 }).notNull().default("public"),
+  connectHost: text("connectHost"),
   blockHttp: boolean("blockHttp").notNull().default(false),
   blockSocks: boolean("blockSocks").notNull().default(false),
   blockTls: boolean("blockTls").notNull().default(false),

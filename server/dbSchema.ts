@@ -109,6 +109,7 @@ const tables: TableDef[] = [
       c("id", "id"), c("name", "text", { notNull: true }), c("entryHostId", "int", { notNull: true }),
       c("exitHostId", "int", { notNull: true }), c("mode", "varchar", { length: 32, notNull: true, default: "tls" }),
       c("secret", "text"), c("listenPort", "int", { notNull: true }), c("portRangeStart", "int"), c("portRangeEnd", "int"),
+      c("networkType", "varchar", { length: 32, notNull: true, default: "public" }), c("connectHost", "text"),
       c("blockHttp", "bool", { notNull: true, default: false }), c("blockSocks", "bool", { notNull: true, default: false }),
       c("blockTls", "bool", { notNull: true, default: false }), c("isEnabled", "bool", { notNull: true, default: true }), c("isRunning", "bool", { notNull: true, default: false }),
       c("lastLatencyMs", "int"), c("lastTestStatus", "text"), c("lastTestMessage", "text"), c("lastTestAt", "epoch"),
