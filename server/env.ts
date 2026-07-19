@@ -84,6 +84,14 @@ export const ENV = {
   // 管理后台一键升级命令。为空时只允许检查更新，不执行升级。
   // 执行时会注入 FORWARDX_TARGET_VERSION / FORWARDX_CURRENT_VERSION / FORWARDX_REPO_URL。
   upgradeCommand: process.env.FORWARDX_UPGRADE_COMMAND ?? "",
+  xboardSsoEnabled: process.env.XBOARD_SSO_ENABLED === "true",
+  xboardSsoOnly: process.env.XBOARD_SSO_ONLY === "true",
+  xboardSsoPublicKeyPath: process.env.XBOARD_SSO_PUBLIC_KEY_PATH ?? "",
+  xboardSsoIssuer: process.env.XBOARD_SSO_ISSUER ?? "",
+  xboardSsoAudience: process.env.XBOARD_SSO_AUDIENCE ?? "forwardx",
+  xboardSsoKeyId: process.env.XBOARD_SSO_KEY_ID ?? "",
+  xboardSsoForwardxUsername: process.env.XBOARD_SSO_FORWARDX_USERNAME ?? "",
+  xboardLoginUrl: process.env.XBOARD_LOGIN_URL ?? process.env.XBOARD_SSO_LOGIN_URL ?? "https://xb.senlimm.top",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramBotPolling: process.env.TELEGRAM_BOT_POLLING !== "false",
   isProduction: process.env.NODE_ENV === "production",

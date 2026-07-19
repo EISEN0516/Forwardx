@@ -9,6 +9,7 @@ import { getSessionCookieOptions } from "./cookies";
 import {
   encodeSessionLease,
   getSessionKindField,
+  isSessionLeaseActive,
   isSessionLeaseOwnedByAnother,
   normalizeSessionKind,
   parseSessionLease,
@@ -16,8 +17,9 @@ import {
   type SessionKind,
 } from "../session";
 import { DEV_ADMIN_USERNAME, isDevPanelMode } from "../devPanel";
-import { getActiveAuthSession, touchAuthSession } from "../repositories/sessionRepository";
+import { getActiveAuthSession, revokeAuthSession, touchAuthSession } from "../repositories/sessionRepository";
 import { withKeyedTaskLock } from "../keyedTaskLock";
+import { isAuthSourceAllowed, normalizeAuthSource, type AuthSource } from "../services/authSessionService";
 
 export interface AuthSession {
   kind: SessionKind;
@@ -25,6 +27,7 @@ export interface AuthSession {
   token: string;
   legacy: boolean;
   source: "cookie" | "bearer";
+  authSource: AuthSource;
 }
 
 export interface TrpcContext {
@@ -70,6 +73,7 @@ function normalizeSessionPayload(req: Request, payload: unknown) {
     userId,
     sid: sid || null,
     kind,
+    authSource: normalizeAuthSource(data.authSource, kind),
   };
 }
 
@@ -129,6 +133,16 @@ async function resolveSessionFromToken(req: Request, res: Response, token: strin
         failureReason: "session_replaced",
       };
     }
+    if (!isAuthSourceAllowed(normalized.authSource)) {
+      await revokeAuthSession(found.id, normalized.sid, sessionKind, "xboard_sso_only").catch(() => undefined);
+      const field = getSessionKindField(sessionKind);
+      const lease = parseSessionLease(String((found as any)[field] || ""));
+      if (!lease || lease.sid === normalized.sid || !isSessionLeaseActive(lease)) {
+        await db.clearUserSessionToken(found.id, sessionKind).catch(() => undefined);
+      }
+      if (source === "cookie") clearSessionCookie(res, req);
+      return { user: null, authSession: null, failureReason: "session_replaced" };
+    }
     if (!(await allowMultiDeviceLogin()) && !(await claimSessionLease(found, sessionKind, normalized.sid))) {
       return {
         user: null,
@@ -148,6 +162,7 @@ async function resolveSessionFromToken(req: Request, res: Response, token: strin
         token,
         legacy: false,
         source,
+        authSource: normalized.authSource,
       },
     };
   } catch {
@@ -163,7 +178,7 @@ export async function createContext({ req, res }: CreateExpressContextOptions): 
   let authSession: AuthSession | null = null;
   let authFailureReason: TrpcContext["authFailureReason"] = null;
 
-  if (isDevPanelMode()) {
+  if (isDevPanelMode() && !ENV.xboardSsoOnly) {
     const devUser = await db.getUserByUsername(DEV_ADMIN_USERNAME).catch(() => null);
     if (devUser) {
       return {
@@ -176,6 +191,7 @@ export async function createContext({ req, res }: CreateExpressContextOptions): 
           token: "dev-panel",
           legacy: false,
           source: "cookie",
+          authSource: "local",
         },
         authFailureReason: null,
       };

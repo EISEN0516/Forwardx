@@ -1,17 +1,13 @@
 ﻿import { z } from "zod";
-import jwt from "jsonwebtoken";
 import { createHash, createHmac, timingSafeEqual } from "crypto";
-import { ACCOUNT_DISABLED_ERR_MSG, COOKIE_NAME } from "../../shared/const";
-import { getSessionCookieOptions } from "../_core/cookies";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { ENV } from "../env";
-import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import { sendTelegramMessage } from "../telegramBot";
 import { createMobileTelegramLoginChallenge, takeMobileTelegramLoginChallenge } from "../telegramMobileLogin";
 import { consumeTelegramWebAppLoginChallenge } from "../telegramWebAppLogin";
-import { SESSION_TOKEN_TTL_MS, SESSION_TOKEN_TTL_SECONDS, stripSessionSensitiveFields, type SessionKind } from "../session";
-import { createAuthSession } from "../repositories/sessionRepository";
+import { type SessionKind } from "../session";
+import { assertAuthSourceAllowed, issueAuthSession } from "../services/authSessionService";
 
 const BIND_CODE_TTL_MS = 5 * 60 * 1000;
 const MOBILE_LOGIN_TTL_MS = 5 * 60 * 1000;
@@ -175,26 +171,21 @@ function verifyTelegramWidgetLogin(payload: z.infer<typeof telegramWidgetLoginSc
 }
 
 async function issueTelegramSession(ctx: any, user: any, sessionKind: SessionKind, mobile?: boolean) {
-  if (user?.accountEnabled === false) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
-  }
-  const sid = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
-  await createAuthSession({
-    userId: user.id,
-    sid,
+  return issueAuthSession({
+    req: ctx.req,
+    res: ctx.res,
+    user,
     kind: sessionKind,
-    expiresAt: new Date(Date.now() + SESSION_TOKEN_TTL_MS),
+    authSource: "telegram",
+    mobile,
   });
-  const token = jwt.sign({ userId: user.id, sid, kind: sessionKind }, ENV.cookieSecret, { expiresIn: SESSION_TOKEN_TTL_SECONDS });
-  ctx.res.cookie(COOKIE_NAME, token, getSessionCookieOptions(ctx.req));
-  return { ...stripSessionSensitiveFields(user), mobileToken: mobile ? token : null };
 }
 
 export const telegramRouter = router({
   loginStatus: publicProcedure.query(async () => {
     const settings = await getTelegramSettings();
     return {
-      enabled: settings.enabled,
+      enabled: !ENV.xboardSsoOnly && settings.enabled,
       configured: settings.configured,
       botUsername: settings.botUsername,
       panelPublicUrl: settings.panelPublicUrl,
@@ -301,6 +292,7 @@ export const telegramRouter = router({
   }),
 
   startMobileLogin: publicProcedure.mutation(async () => {
+    assertAuthSourceAllowed("telegram");
     const settings = await getTelegramSettings();
     if (!settings.enabled || !settings.configured || !settings.botUsername) {
       throw new Error("Telegram 登录尚未启用");
@@ -319,6 +311,7 @@ export const telegramRouter = router({
   mobileLoginStatus: publicProcedure
     .input(z.object({ code: z.string().min(8).max(64) }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("telegram");
       const code = input.code.trim().toUpperCase();
       if (!isMobileLoginCode(code)) return { status: "pending" as const };
       const user = await db.consumeTelegramLoginCode(code);
@@ -330,6 +323,7 @@ export const telegramRouter = router({
   login: publicProcedure
     .input(z.object({ code: z.string().min(8).max(64), mobile: z.boolean().optional() }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("telegram");
       const user = await db.consumeTelegramLoginCode(input.code.trim().toUpperCase());
       if (!user) throw new Error("Telegram 登录码无效或已过期");
       return await issueTelegramSession(ctx, user, "telegram", input.mobile);
@@ -338,6 +332,7 @@ export const telegramRouter = router({
   loginWithWidget: publicProcedure
     .input(telegramWidgetLoginSchema)
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("telegram");
       const settings = await getTelegramRuntimeSettings();
       if (!settings.enabled || !settings.configured || !settings.token) {
         throw new Error("TELEGRAM_LOGIN_DISABLED");
@@ -362,6 +357,7 @@ export const telegramRouter = router({
   loginWithWebApp: publicProcedure
     .input(telegramWebAppLoginSchema)
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("telegram");
       const settings = await getTelegramRuntimeSettings();
       if (!settings.enabled || !settings.configured || !settings.token) {
         throw new Error("TELEGRAM_LOGIN_DISABLED");
@@ -393,4 +389,3 @@ export const telegramRouter = router({
       return await issueTelegramSession(ctx, user, "telegram", input.mobile);
     }),
 });
-

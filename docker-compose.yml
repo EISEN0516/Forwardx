@@ -2,11 +2,16 @@ name: ${COMPOSE_PROJECT_NAME:-forwardx}
 
 services:
   forwardx:
-    image: ${FORWARDX_IMAGE:-ghcr.io/poouo/forwardx:latest}
+    image: ${FORWARDX_IMAGE:-forwardx-xboard:v2.3.243-sso.1}
+    build:
+      context: .
+      dockerfile: Dockerfile.sso-runtime
+      args:
+        FORWARDX_BASE_IMAGE: ${FORWARDX_BASE_IMAGE:-ghcr.io/poouo/forwardx:v2.3.243}
     container_name: ${FORWARDX_CONTAINER_NAME:-forwardx-panel}
     restart: unless-stopped
     ports:
-      - "${PORT:-9810}:3000"
+      - "127.0.0.1:${PORT:-9810}:3000"
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -22,10 +27,27 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE:-}
       POSTGRES_SSL: ${POSTGRES_SSL:-false}
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-string}
+      JWT_SECRET: ${JWT_SECRET:?Set a random JWT_SECRET in .env}
+      XBOARD_SSO_ENABLED: ${XBOARD_SSO_ENABLED:-true}
+      XBOARD_SSO_ONLY: ${XBOARD_SSO_ONLY:-false}
+      XBOARD_SSO_PUBLIC_KEY_PATH: /run/secrets/xboard-sso-public.pem
+      XBOARD_SSO_ISSUER: ${XBOARD_SSO_ISSUER:-https://xb.senlimm.top}
+      XBOARD_SSO_AUDIENCE: ${XBOARD_SSO_AUDIENCE:-forwardx}
+      XBOARD_SSO_KEY_ID: ${XBOARD_SSO_KEY_ID:-xboard-main-2026}
+      XBOARD_SSO_FORWARDX_USERNAME: ${XBOARD_SSO_FORWARDX_USERNAME:?Set the existing ForwardX administrator username in .env}
+      XBOARD_LOGIN_URL: ${XBOARD_LOGIN_URL:-https://xb.senlimm.top}
     volumes:
       - forwardx-data:/data
+      - ${XBOARD_SSO_PUBLIC_KEY_HOST_PATH:-./secrets/xboard-sso-public.pem}:/run/secrets/xboard-sso-public.pem:ro
+    networks:
+      - default
+      - xboard_proxy
 
 volumes:
   forwardx-data:
     driver: local
+
+networks:
+  xboard_proxy:
+    name: xboard_default
+    external: true

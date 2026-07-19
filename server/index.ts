@@ -16,6 +16,8 @@ import { initDatabase } from "./db";
 import { installPanelLogger } from "./_core/panelLogger";
 import { loadPanelSslRuntimeConfig } from "./panelSsl";
 import { startBackgroundServices } from "./backgroundServices";
+import { ENV } from "./env";
+import { xboardSsoHandler } from "./xboardSso";
 
 installPanelLogger();
 
@@ -72,6 +74,16 @@ function installMobileCors(app: express.Express) {
   });
 }
 
+function getXboardLoginUrl() {
+  try {
+    const url = new URL(ENV.xboardLoginUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("unsupported protocol");
+    return url.toString();
+  } catch {
+    return "https://xb.senlimm.top/";
+  }
+}
+
 async function startServer() {
   const databaseStatus = await initDatabase();
 
@@ -89,6 +101,15 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   app.use(cookieParser());
   installMobileCors(app);
+  app.get("/auth/xboard", xboardSsoHandler);
+  app.get("/login", (_req, res, next) => {
+    if (!ENV.xboardSsoOnly) {
+      next();
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.redirect(303, getXboardLoginUrl());
+  });
   app.use(agentRouter);
   app.use(migrationRouter);
   app.use(

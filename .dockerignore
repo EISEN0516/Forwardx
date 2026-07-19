@@ -1,6 +1,10 @@
 node_modules
 dist
+!dist/
+!dist/**
 client/dist
+!client/dist/
+!client/dist/**
 docs
 udp2raw/doc
 udp2raw/images
