@@ -284,7 +284,7 @@ export default function Login() {
   // 登录 mutation
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
-      if (data.twoFactorRequired) {
+      if ("twoFactorRequired" in data) {
         setLoginCaptchaRequiredFor(null);
         setCaptchaChallenge(null);
         setCaptchaAnswer("");
@@ -1258,4 +1258,3 @@ export default function Login() {
     </div>
   );
 }
-

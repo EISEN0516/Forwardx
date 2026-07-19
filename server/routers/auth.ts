@@ -1,19 +1,18 @@
 import { z } from "zod";
-import { nanoid } from "nanoid";
-import jwt from "jsonwebtoken";
 import { ACCOUNT_DISABLED_ERR_MSG, COOKIE_NAME, SESSION_BUSY_ERR_MSG, SESSION_REPLACED_ERR_MSG } from "../../shared/const";
 import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { ENV } from "../env";
 import * as db from "../db";
-import { getSessionKindField, isSessionLeaseActive, parseSessionLease, resolveRequestedSessionKind, SESSION_TOKEN_TTL_MS, SESSION_TOKEN_TTL_SECONDS, stripSessionSensitiveFields, type SessionKind } from "../session";
-import { createAuthSession, revokeAuthSession } from "../repositories/sessionRepository";
+import { getSessionKindField, isSessionLeaseActive, parseSessionLease, resolveRequestedSessionKind, stripSessionSensitiveFields } from "../session";
+import { revokeAuthSession } from "../repositories/sessionRepository";
 import { getEmailConfig, sendVerificationCode } from "../email";
 import { createTotpSecret, createTotpUri, verifyTotpToken } from "../totp";
 import { clearTwoFactorChallenge, createTwoFactorChallenge, getTwoFactorChallenge, recordTwoFactorChallengeFailure } from "../twoFactorChallenges";
 import { clearTwoFactorSetupChallenge, clearTwoFactorSetupChallengesForUser, createTwoFactorSetupChallenge, getTwoFactorSetupChallenge } from "../twoFactorSetupChallenges";
 import { authCaptcha, CaptchaRefreshRateLimitError } from "../authCaptcha";
+import { assertAuthSourceAllowed, issueAuthSession } from "../services/authSessionService";
 
 type LoginFailEntry = { count: number; lastFailAt: number };
 const loginFailStore = new Map<string, LoginFailEntry>();
@@ -134,25 +133,16 @@ function getRequestIp(ctx: { req: { ip?: string; socket: { remoteAddress?: strin
   return ctx.req.ip || ctx.req.socket.remoteAddress || "unknown";
 }
 
-async function issueLoginSession(ctx: any, user: any, sessionKind: SessionKind, mobile?: boolean) {
-  if (user?.accountEnabled === false) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: ACCOUNT_DISABLED_ERR_MSG });
-  }
-  const sid = nanoid(24);
-  await createAuthSession({
-    userId: user.id,
-    sid,
-    kind: sessionKind,
-    expiresAt: new Date(Date.now() + SESSION_TOKEN_TTL_MS),
-  });
-  const token = jwt.sign({ userId: user.id, sid, kind: sessionKind }, ENV.cookieSecret, { expiresIn: SESSION_TOKEN_TTL_SECONDS });
-  ctx.res.cookie(COOKIE_NAME, token, getSessionCookieOptions(ctx.req));
-  return { ...stripSessionSensitiveFields(user), mobileToken: mobile ? token : null };
-}
-
 async function createLoginSession(ctx: any, user: any, mobile?: boolean) {
   const sessionKind = resolveRequestedSessionKind(ctx.req, mobile);
-  return issueLoginSession(ctx, user, sessionKind, mobile);
+  return issueAuthSession({
+    req: ctx.req,
+    res: ctx.res,
+    user,
+    kind: sessionKind,
+    authSource: "local",
+    mobile,
+  });
 }
 
 function sanitizeUser(user: any) {
@@ -225,6 +215,7 @@ export const authRouter = router({
   createCaptcha: publicProcedure
     .input(z.object({ purpose: z.enum(["login", "register"]) }))
     .mutation(({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       try {
         return authCaptcha.createImageChallenge(getRequestIp(ctx), input.purpose);
       } catch (error) {
@@ -240,13 +231,14 @@ export const authRouter = router({
 
   emailConfig: publicProcedure.query(async () => {
     const config = await getEmailConfig();
-    const registrationEnabled = (await db.getSetting("registrationEnabled")) !== "false";
+    const registrationEnabled = !ENV.xboardSsoOnly && (await db.getSetting("registrationEnabled")) !== "false";
     return { verifyRegistration: config.enabled && config.verifyRegistration, registrationEnabled };
   }),
 
   sendEmailCode: publicProcedure
     .input(z.object({ email: z.string().email("邮箱格式不正确") }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       const registrationEnabled = (await db.getSetting("registrationEnabled")) !== "false";
       if (!registrationEnabled) {
         console.warn(`[Auth] Email verification rejected registration disabled target=${maskIdentifier(input.email)} ip=${getRequestIp(ctx)}`);
@@ -278,6 +270,7 @@ export const authRouter = router({
   needsCaptcha: publicProcedure
     .input(z.object({ username: z.string() }))
     .query(({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       const ip = ctx.req.ip || ctx.req.socket.remoteAddress || "unknown";
       return { required: needsCaptcha(ip, input.username) };
     }),
@@ -292,6 +285,7 @@ export const authRouter = router({
       twoFactorCode: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       const ip = ctx.req.ip || ctx.req.socket.remoteAddress || "unknown";
       const limited = loginRateLimitState(ip, input.username);
       if (limited.limited) {
@@ -354,6 +348,7 @@ export const authRouter = router({
       mobile: z.boolean().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       const challenge = getTwoFactorChallenge(input.challengeId);
       if (!challenge) throw new Error("双重验证已过期，请重新登录");
       const user = await db.getUserById(challenge.userId);
@@ -385,6 +380,7 @@ export const authRouter = router({
       captchaAnswer: z.string().trim().min(1).max(12),
     }))
     .mutation(async ({ input, ctx }) => {
+      assertAuthSourceAllowed("local");
       const registrationEnabled = (await db.getSetting("registrationEnabled")) !== "false";
       if (!registrationEnabled) {
         console.warn(`[Auth] Register rejected disabled username=${maskIdentifier(input.username)} ip=${getRequestIp(ctx)}`);

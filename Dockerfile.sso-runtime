@@ -1,0 +1,8 @@
+ARG FORWARDX_BASE_IMAGE=ghcr.io/poouo/forwardx:v2.3.243
+FROM ${FORWARDX_BASE_IMAGE}
+
+# Build these artifacts with `pnpm build` before building this lightweight image.
+# Docker merges these files into the upstream image, so its bundled dist/agent
+# runtime remains intact.
+COPY dist/ ./dist/
+COPY client/dist/ ./client/dist/
